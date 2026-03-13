@@ -39,6 +39,7 @@ export default function App() {
   const [liveEval, setLiveEval] = useState<LiveEval | null>(null)
   const [reviewMoveIndex, setReviewMoveIndex] = useState<number | null>(null)
   const [analysisFens, setAnalysisFens] = useState<string[]>([])
+  const [moveSquaresHistory, setMoveSquaresHistory] = useState<{ from: string; to: string }[]>([])
 
   const tc = TIME_CONTROLS[selectedTC]
   const clock = useChessClock(tc.seconds, tc.increment)
@@ -83,6 +84,7 @@ export default function App() {
       setGame(gameCopy)
       setMoveHistory(newMoveHistory)
       setFenHistory(newFenHistory)
+      setMoveSquaresHistory((prev) => [...prev, { from: sourceSquare, to: targetSquare }])
 
       // Start game on first move
       if (gameState === 'idle') {
@@ -135,6 +137,7 @@ export default function App() {
     setLiveEval(null)
     setReviewMoveIndex(null)
     setAnalysisFens([])
+    setMoveSquaresHistory([])
   }
 
   // Reset clock when time control changes (only when idle)
@@ -150,12 +153,23 @@ export default function App() {
     ? analysisFens[reviewMoveIndex + 1]
     : game.fen()
 
-  const moveSquares: Record<string, { backgroundColor: string }> = {}
+  // Last move highlight: during review use that move's squares, otherwise use the latest move
+  const lastMoveSquares = reviewMoveIndex !== null
+    ? moveSquaresHistory[reviewMoveIndex]
+    : moveSquaresHistory[moveSquaresHistory.length - 1]
+
+  const squareStyles: Record<string, { backgroundColor: string }> = {}
+
+  if (lastMoveSquares) {
+    squareStyles[lastMoveSquares.from] = { backgroundColor: 'rgba(255, 255, 0, 0.35)' }
+    squareStyles[lastMoveSquares.to] = { backgroundColor: 'rgba(255, 255, 0, 0.5)' }
+  }
+
   if (reviewMoveIndex === null && game.inCheck()) {
     const kingSquare = game.board().flat().find(
       (p) => p && p.type === 'k' && p.color === game.turn()
     )
-    if (kingSquare) moveSquares[kingSquare.square] = { backgroundColor: 'rgba(255,0,0,0.4)' }
+    if (kingSquare) squareStyles[kingSquare.square] = { backgroundColor: 'rgba(255,0,0,0.4)' }
   }
 
   const isPlaying = gameState === 'playing' || gameState === 'idle'
@@ -190,7 +204,7 @@ export default function App() {
                 options={{
                   position: displayFen,
                   onPieceDrop: isPlaying ? onDrop : undefined,
-                  squareStyles: moveSquares,
+                  squareStyles,
                   boardStyle: { borderRadius: '4px' },
                   darkSquareStyle: { backgroundColor: '#769656' },
                   lightSquareStyle: { backgroundColor: '#eeeed2' },
