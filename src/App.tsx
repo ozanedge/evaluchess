@@ -37,6 +37,8 @@ export default function App() {
   const [selectedTC, setSelectedTC] = useState(4) // default 5+0
   const [clockEnabled, setClockEnabled] = useState(true)
   const [liveEval, setLiveEval] = useState<LiveEval | null>(null)
+  const [reviewMoveIndex, setReviewMoveIndex] = useState<number | null>(null)
+  const [analysisFens, setAnalysisFens] = useState<string[]>([])
 
   const tc = TIME_CONTROLS[selectedTC]
   const clock = useChessClock(tc.seconds, tc.increment)
@@ -116,6 +118,7 @@ export default function App() {
     })
     const result = buildAnalysis(moves, evals)
     setAnalysisResult(result)
+    setAnalysisFens(fens)
     setGameState('analyzed')
   }
 
@@ -130,6 +133,8 @@ export default function App() {
     setAnalysisProgress({ current: 0, total: 0 })
     clock.reset(tc.seconds)
     setLiveEval(null)
+    setReviewMoveIndex(null)
+    setAnalysisFens([])
   }
 
   // Reset clock when time control changes (only when idle)
@@ -140,8 +145,13 @@ export default function App() {
     }
   }
 
+  // Board position: show reviewed move position, or current game position
+  const displayFen = reviewMoveIndex !== null && analysisFens[reviewMoveIndex + 1]
+    ? analysisFens[reviewMoveIndex + 1]
+    : game.fen()
+
   const moveSquares: Record<string, { backgroundColor: string }> = {}
-  if (game.inCheck()) {
+  if (reviewMoveIndex === null && game.inCheck()) {
     const kingSquare = game.board().flat().find(
       (p) => p && p.type === 'k' && p.color === game.turn()
     )
@@ -176,13 +186,15 @@ export default function App() {
             <EvalBar ev={liveEval} height={500} />
             <div className="rounded-2xl overflow-hidden shadow-2xl" style={{ width: 500, height: 500 }}>
               <Chessboard
+                key={reviewMoveIndex !== null ? `review-${reviewMoveIndex}` : 'game'}
                 options={{
-                  position: game.fen(),
+                  position: displayFen,
                   onPieceDrop: isPlaying ? onDrop : undefined,
                   squareStyles: moveSquares,
                   boardStyle: { borderRadius: '4px' },
                   darkSquareStyle: { backgroundColor: '#769656' },
                   lightSquareStyle: { backgroundColor: '#eeeed2' },
+                  showAnimations: false,
                 }}
               />
             </div>
@@ -301,7 +313,12 @@ export default function App() {
                   <span className="text-white font-semibold">{gameOverMsg}</span>
                 </div>
               )}
-              <Analysis result={analysisResult} onNewGame={handleNewGame} />
+              <Analysis
+                result={analysisResult}
+                onNewGame={handleNewGame}
+                onMoveClick={setReviewMoveIndex}
+                selectedMoveIndex={reviewMoveIndex}
+              />
             </>
           )}
         </div>

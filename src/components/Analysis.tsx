@@ -3,6 +3,8 @@ import type { GameAnalysisResult, MoveClassification, PlayerStats } from '../uti
 interface AnalysisProps {
   result: GameAnalysisResult
   onNewGame: () => void
+  onMoveClick: (index: number) => void
+  selectedMoveIndex: number | null
 }
 
 const classificationColors: Record<MoveClassification, string> = {
@@ -55,7 +57,7 @@ function PlayerCard({ name, stats, color }: { name: string; stats: PlayerStats; 
   )
 }
 
-export default function Analysis({ result, onNewGame }: AnalysisProps) {
+export default function Analysis({ result, onNewGame, onMoveClick, selectedMoveIndex }: AnalysisProps) {
   return (
     <div className="flex flex-col gap-4">
       <h2 className="text-xl font-bold text-white">Game Analysis</h2>
@@ -73,7 +75,10 @@ export default function Analysis({ result, onNewGame }: AnalysisProps) {
           {result.moves.map((m, i) => (
             <div
               key={i}
-              className={`flex items-center justify-between px-3 py-1.5 rounded-lg border text-sm ${classificationBg[m.classification]}`}
+              onClick={() => onMoveClick(i)}
+              className={`flex items-center justify-between px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition-opacity ${
+                classificationBg[m.classification]
+              } ${selectedMoveIndex === i ? 'ring-2 ring-white/40' : 'hover:opacity-80'}`}
             >
               <span className="text-gray-500 w-8 text-xs">
                 {m.player === 'white' ? `${m.moveNumber}.` : `${m.moveNumber}...`}
