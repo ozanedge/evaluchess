@@ -4,6 +4,7 @@ import { Chessboard } from 'react-chessboard'
 import { useStockfish } from './hooks/useStockfish'
 import { useChessClock } from './hooks/useChessClock'
 import { usePositionEval } from './hooks/usePositionEval'
+import { useComputerMove } from './hooks/useComputerMove'
 import { buildAnalysis } from './utils/analysis'
 import type { GameAnalysisResult } from './utils/analysis'
 import Analysis from './components/Analysis'
@@ -38,6 +39,7 @@ export default function App() {
   const [clockEnabled, setClockEnabled] = useState(true)
   const [playerColor, setPlayerColor] = useState<'white' | 'black'>('white')
   const [liveEval, setLiveEval] = useState<LiveEval | null>(null)
+  const [computerThinking, setComputerThinking] = useState(false)
   const [reviewMoveIndex, setReviewMoveIndex] = useState<number | null>(null)
   const [analysisFens, setAnalysisFens] = useState<string[]>([])
   const [moveSquaresHistory, setMoveSquaresHistory] = useState<{ from: string; to: string }[]>([])
@@ -46,6 +48,7 @@ export default function App() {
   const clock = useChessClock(tc.seconds, tc.increment)
   const { analyzeGame, destroy } = useStockfish()
   const { evaluate: evalPosition, stop: stopEval } = usePositionEval((ev) => setLiveEval(ev))
+  const { getMove: getComputerMove } = useComputerMove()
 
   useEffect(() => () => destroy(), [destroy])
 
@@ -77,13 +80,67 @@ export default function App() {
     return ''
   }, [])
 
+  const computerColor = playerColor === 'white' ? 'black' : 'white'
+
+  async function triggerComputerMove(fen: string) {
+    setComputerThinking(true)
+    try {
+      const uciMove = await getComputerMove(fen)
+      const from = uciMove.substring(0, 2)
+      const to = uciMove.substring(2, 4)
+      const promotion = uciMove[4] || 'q'
+
+      setGame((prev) => {
+        const g = new Chess(prev.fen())
+        const move = g.move({ from, to, promotion })
+        if (!move) return prev
+
+        const movedColor: 'white' | 'black' = move.color === 'w' ? 'white' : 'black'
+        setMoveHistory((h) => [...h, move.san])
+        setFenHistory((h) => [...h, g.fen()])
+        setMoveSquaresHistory((h) => [...h, { from, to }])
+        if (clockEnabled) clock.onMove(movedColor)
+        evalPosition(g.fen())
+
+        const overMsg = checkGameOver(g)
+        if (overMsg) {
+          setGameOverMsg(overMsg)
+          clock.stop()
+          stopEval()
+          // Use a ref snapshot for analysis — gathered from updated state in next render
+          setTimeout(() => {
+            setFenHistory((fens) => {
+              setMoveHistory((moves) => {
+                triggerAnalysis(fens, moves)
+                return moves
+              })
+              return fens
+            })
+          }, 0)
+        }
+
+        return g
+      })
+    } catch {
+      // computer had no move
+    } finally {
+      setComputerThinking(false)
+    }
+  }
+
   function handleStartGame() {
     setGameState('playing')
     if (clockEnabled) clock.start()
+    // If player chose black, computer (white) goes first
+    if (playerColor === 'black') {
+      triggerComputerMove(new Chess().fen())
+    }
   }
 
   function onDrop({ sourceSquare, targetSquare }: { piece: unknown; sourceSquare: string; targetSquare: string | null }) {
-    if (gameState !== 'playing') return false
+    if (gameState !== 'playing' || computerThinking) return false
+    // Block if it's the computer's turn
+    if ((game.turn() === 'w') === (computerColor === 'white')) return false
     if (!targetSquare) return false
 
     try {
@@ -112,6 +169,9 @@ export default function App() {
         clock.stop()
         stopEval()
         triggerAnalysis(newFenHistory, newMoveHistory)
+      } else {
+        // Trigger computer response
+        triggerComputerMove(gameCopy.fen())
       }
 
       return true
@@ -146,6 +206,7 @@ export default function App() {
     setReviewMoveIndex(null)
     setAnalysisFens([])
     setMoveSquaresHistory([])
+    setComputerThinking(false)
   }
 
   // Reset clock when time control changes (only when idle)
@@ -328,12 +389,19 @@ export default function App() {
           {/* In-game panel */}
           {gameState === 'playing' && (
             <div className="bg-gray-800 rounded-xl p-4 flex flex-col gap-3">
-              <div className="flex items-center gap-2">
-                <div className={`w-3 h-3 rounded-full ${game.turn() === 'w' ? 'bg-white' : 'bg-gray-900 border border-gray-400'}`} />
-                <span className="text-gray-300 text-sm">
-                  {game.turn() === 'w' ? "White's turn" : "Black's turn"}
-                </span>
-              </div>
+              {computerThinking ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                  <span className="text-gray-300 text-sm">Computer thinking...</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className={`w-3 h-3 rounded-full ${game.turn() === 'w' ? 'bg-white' : 'bg-gray-900 border border-gray-400'}`} />
+                  <span className="text-gray-300 text-sm">
+                    {game.turn() === 'w' ? "White's turn" : "Black's turn"}
+                  </span>
+                </div>
+              )}
               <button
                 onClick={handleNewGame}
                 className="w-full py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors"
