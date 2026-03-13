@@ -52,11 +52,13 @@ export default function App() {
 
   useEffect(() => () => destroy(), [destroy])
 
-  // After analysis completes, jump to first blunder
+  // After analysis completes, jump to first mistake or blunder by the player
   useEffect(() => {
     if (gameState === 'analyzed' && analysisResult) {
-      const firstBlunder = analysisResult.moves.findIndex((m) => m.classification === 'blunder')
-      if (firstBlunder !== -1) setReviewMoveIndex(firstBlunder)
+      const firstError = analysisResult.moves.findIndex(
+        (m) => m.player === playerColor && (m.classification === 'mistake' || m.classification === 'blunder')
+      )
+      if (firstError !== -1) setReviewMoveIndex(firstError)
     }
   }, [gameState, analysisResult])
 
