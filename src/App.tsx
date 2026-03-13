@@ -121,6 +121,8 @@ export default function App() {
     const result = buildAnalysis(moves, evals)
     setAnalysisResult(result)
     setAnalysisFens(fens)
+    const firstBlunder = result.moves.findIndex((m) => m.classification === 'blunder')
+    if (firstBlunder !== -1) setReviewMoveIndex(firstBlunder)
     setGameState('analyzed')
   }
 
