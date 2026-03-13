@@ -77,8 +77,13 @@ export default function App() {
     return ''
   }, [])
 
+  function handleStartGame() {
+    setGameState('playing')
+    if (clockEnabled) clock.start()
+  }
+
   function onDrop({ sourceSquare, targetSquare }: { piece: unknown; sourceSquare: string; targetSquare: string | null }) {
-    if (gameState !== 'playing' && gameState !== 'idle') return false
+    if (gameState !== 'playing') return false
     if (!targetSquare) return false
 
     try {
@@ -94,12 +99,6 @@ export default function App() {
       setMoveHistory(newMoveHistory)
       setFenHistory(newFenHistory)
       setMoveSquaresHistory((prev) => [...prev, { from: sourceSquare, to: targetSquare }])
-
-      // Start game on first move
-      if (gameState === 'idle') {
-        setGameState('playing')
-        if (clockEnabled) clock.start()
-      }
 
       // Switch clock after move
       if (clockEnabled) clock.onMove(movedColor)
@@ -181,7 +180,7 @@ export default function App() {
     if (kingSquare) squareStyles[kingSquare.square] = { backgroundColor: 'rgba(255,0,0,0.4)' }
   }
 
-  const isPlaying = gameState === 'playing' || gameState === 'idle'
+  const isPlaying = gameState === 'playing'
 
   return (
     <div className="min-h-screen bg-gray-900 flex items-start justify-center p-6">
@@ -263,7 +262,8 @@ export default function App() {
 
         {/* Side panel */}
         <div className="flex-1 min-w-64 flex flex-col gap-4">
-          {(gameState === 'idle' || gameState === 'playing') && (
+          {/* Configurator — idle only */}
+          {gameState === 'idle' && (
             <div className="bg-gray-800 rounded-xl p-4 flex flex-col gap-4">
               {/* Time control */}
               <div>
@@ -283,11 +283,10 @@ export default function App() {
                     <button
                       key={tc.label}
                       onClick={() => handleTCChange(i)}
-                      disabled={gameState === 'playing'}
                       className={`py-1.5 text-xs rounded-lg font-medium transition-colors ${
                         selectedTC === i
                           ? 'bg-indigo-600 text-white'
-                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed'
+                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                       }`}
                     >
                       {tc.label}
@@ -304,8 +303,7 @@ export default function App() {
                     <button
                       key={c}
                       onClick={() => setPlayerColor(c)}
-                      disabled={gameState === 'playing'}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
                         playerColor === c
                           ? 'bg-indigo-600 text-white'
                           : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
@@ -318,21 +316,29 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Turn indicator */}
+              <button
+                onClick={handleStartGame}
+                className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition-colors"
+              >
+                Start Game
+              </button>
+            </div>
+          )}
+
+          {/* In-game panel */}
+          {gameState === 'playing' && (
+            <div className="bg-gray-800 rounded-xl p-4 flex flex-col gap-3">
               <div className="flex items-center gap-2">
-                <div className={`w-3 h-3 rounded-full ${
-                  game.turn() === 'w' ? 'bg-white' : 'bg-gray-900 border border-gray-400'
-                }`} />
+                <div className={`w-3 h-3 rounded-full ${game.turn() === 'w' ? 'bg-white' : 'bg-gray-900 border border-gray-400'}`} />
                 <span className="text-gray-300 text-sm">
-                  {gameState === 'idle' ? 'Drag a piece to start' : game.turn() === 'w' ? "White's turn" : "Black's turn"}
+                  {game.turn() === 'w' ? "White's turn" : "Black's turn"}
                 </span>
               </div>
-
               <button
                 onClick={handleNewGame}
                 className="w-full py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors"
               >
-                Reset Board
+                Resign / New Game
               </button>
             </div>
           )}
