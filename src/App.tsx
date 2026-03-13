@@ -36,6 +36,7 @@ export default function App() {
   const [gameOverMsg, setGameOverMsg] = useState('')
   const [selectedTC, setSelectedTC] = useState(4) // default 5+0
   const [clockEnabled, setClockEnabled] = useState(true)
+  const [playerColor, setPlayerColor] = useState<'white' | 'black'>('white')
   const [liveEval, setLiveEval] = useState<LiveEval | null>(null)
   const [reviewMoveIndex, setReviewMoveIndex] = useState<number | null>(null)
   const [analysisFens, setAnalysisFens] = useState<string[]>([])
@@ -189,19 +190,24 @@ export default function App() {
         <div className="flex flex-col gap-3">
           <h1 className="text-2xl font-bold text-white">Evaluchess</h1>
 
-          {/* Black clock + label */}
-          <div className="flex items-center gap-3">
-            <div className="w-4 h-4 rounded-full bg-gray-900 border border-gray-600 shrink-0" />
-            <span className="text-gray-300 text-sm font-medium w-12">Black</span>
-            {clockEnabled && (
-              <ClockDisplay
-                timeMs={clock.timeBlack}
-                isActive={clock.activeColor === 'black' && isPlaying}
-                isFlagged={clock.flagged === 'black'}
-                color="black"
-              />
-            )}
-          </div>
+          {/* Opponent clock (top) */}
+          {(() => {
+            const opponent = playerColor === 'white' ? 'black' : 'white'
+            return (
+              <div className="flex items-center gap-3">
+                <div className={`w-4 h-4 rounded-full shrink-0 ${opponent === 'white' ? 'bg-white' : 'bg-gray-900 border border-gray-600'}`} />
+                <span className="text-gray-300 text-sm font-medium w-12 capitalize">{opponent}</span>
+                {clockEnabled && (
+                  <ClockDisplay
+                    timeMs={opponent === 'white' ? clock.timeWhite : clock.timeBlack}
+                    isActive={clock.activeColor === opponent && isPlaying}
+                    isFlagged={clock.flagged === opponent}
+                    color={opponent}
+                  />
+                )}
+              </div>
+            )
+          })()}
 
           {/* Board + eval bar */}
           <div className="flex gap-2 items-stretch">
@@ -211,6 +217,7 @@ export default function App() {
                 key={reviewMoveIndex !== null ? `review-${reviewMoveIndex}` : 'game'}
                 options={{
                   position: displayFen,
+                  boardOrientation: playerColor,
                   onPieceDrop: isPlaying ? onDrop : undefined,
                   squareStyles,
                   boardStyle: { borderRadius: '4px' },
@@ -222,16 +229,16 @@ export default function App() {
             </div>
           </div>
 
-          {/* White clock + label */}
+          {/* Player clock (bottom) */}
           <div className="flex items-center gap-3">
-            <div className="w-4 h-4 rounded-full bg-white shrink-0" />
-            <span className="text-gray-300 text-sm font-medium w-12">White</span>
+            <div className={`w-4 h-4 rounded-full shrink-0 ${playerColor === 'white' ? 'bg-white' : 'bg-gray-900 border border-gray-600'}`} />
+            <span className="text-gray-300 text-sm font-medium w-12 capitalize">{playerColor}</span>
             {clockEnabled && (
               <ClockDisplay
-                timeMs={clock.timeWhite}
-                isActive={clock.activeColor === 'white' && isPlaying}
-                isFlagged={clock.flagged === 'white'}
-                color="white"
+                timeMs={playerColor === 'white' ? clock.timeWhite : clock.timeBlack}
+                isActive={clock.activeColor === playerColor && isPlaying}
+                isFlagged={clock.flagged === playerColor}
+                color={playerColor}
               />
             )}
           </div>
@@ -284,6 +291,28 @@ export default function App() {
                       }`}
                     >
                       {tc.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Color selector */}
+              <div>
+                <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Play as</div>
+                <div className="flex gap-2">
+                  {(['white', 'black'] as const).map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setPlayerColor(c)}
+                      disabled={gameState === 'playing'}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                        playerColor === c
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                      }`}
+                    >
+                      <div className={`w-3 h-3 rounded-full ${c === 'white' ? 'bg-white' : 'bg-gray-900 border border-gray-400'}`} />
+                      <span className="capitalize">{c}</span>
                     </button>
                   ))}
                 </div>
