@@ -155,7 +155,7 @@ export default function App() {
       <div className="flex gap-8 w-full max-w-5xl">
         {/* Board column */}
         <div className="flex flex-col gap-3">
-          <h1 className="text-2xl font-bold text-white">Chess Analyzer</h1>
+          <h1 className="text-2xl font-bold text-white">Evaluchess</h1>
 
           {/* Black clock + label */}
           <div className="flex items-center gap-3">
