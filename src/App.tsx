@@ -48,6 +48,14 @@ export default function App() {
 
   useEffect(() => () => destroy(), [destroy])
 
+  // After analysis completes, jump to first blunder
+  useEffect(() => {
+    if (gameState === 'analyzed' && analysisResult) {
+      const firstBlunder = analysisResult.moves.findIndex((m) => m.classification === 'blunder')
+      if (firstBlunder !== -1) setReviewMoveIndex(firstBlunder)
+    }
+  }, [gameState, analysisResult])
+
   // Handle flag (timeout)
   useEffect(() => {
     if (clock.flagged && gameState === 'playing') {
@@ -121,8 +129,6 @@ export default function App() {
     const result = buildAnalysis(moves, evals)
     setAnalysisResult(result)
     setAnalysisFens(fens)
-    const firstBlunder = result.moves.findIndex((m) => m.classification === 'blunder')
-    if (firstBlunder !== -1) setReviewMoveIndex(firstBlunder)
     setGameState('analyzed')
   }
 
