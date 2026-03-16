@@ -10,6 +10,7 @@ export interface MoveAnalysis {
   cpLoss: number
   evalBefore: PositionEval
   evalAfter: PositionEval
+  bestMove: string | null // UCI format of the best move at this position
 }
 
 export interface GameAnalysisResult {
@@ -28,9 +29,10 @@ export interface PlayerStats {
   blunder: number
 }
 
-// Convert centipawns to win probability (WDL model approximation)
+// Convert centipawns to win probability using Elo-style base-10 logistic (steeper than natural exp,
+// matching Chess.com's model more closely so mistakes/blunders are penalised realistically)
 function cpToWinProb(cp: number): number {
-  return 1 / (1 + Math.exp(-cp / 400))
+  return 1 / (1 + Math.pow(10, -cp / 400))
 }
 
 function winProbToAccuracy(winProbBefore: number, winProbAfter: number): number {
@@ -85,6 +87,7 @@ export function buildAnalysis(
       cpLoss,
       evalBefore,
       evalAfter,
+      bestMove: evalBefore.bestMove ?? null,
     })
   }
 

@@ -12,9 +12,6 @@ export function useComputerMove() {
       const line: string = e.data
       if (typeof line !== 'string') return
       if (line.includes('uciok')) {
-        // ~1200 Elo strength
-        worker.postMessage('setoption name UCI_LimitStrength value true')
-        worker.postMessage('setoption name UCI_Elo value 1200')
         readyRef.current = true
       }
     })
@@ -23,7 +20,7 @@ export function useComputerMove() {
     return () => worker.terminate()
   }, [])
 
-  const getMove = useCallback((fen: string): Promise<string> => {
+  const getMove = useCallback((fen: string, elo: number): Promise<string> => {
     return new Promise((resolve, reject) => {
       const worker = workerRef.current
       if (!worker || !readyRef.current) return reject('not ready')
@@ -40,6 +37,8 @@ export function useComputerMove() {
       }
 
       worker.addEventListener('message', handler)
+      worker.postMessage('setoption name UCI_LimitStrength value true')
+      worker.postMessage(`setoption name UCI_Elo value ${elo}`)
       worker.postMessage('ucinewgame')
       worker.postMessage(`position fen ${fen}`)
       worker.postMessage('go movetime 800')

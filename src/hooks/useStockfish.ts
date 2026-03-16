@@ -3,6 +3,7 @@ import { useRef, useCallback } from 'react'
 export interface PositionEval {
   score: number // centipawns (positive = white advantage)
   mate: number | null
+  bestMove: string | null // UCI format e.g. "e2e4"
 }
 
 export function useStockfish() {
@@ -55,7 +56,9 @@ export function useStockfish() {
 
         if (line.startsWith('bestmove')) {
           worker.removeEventListener('message', handler)
-          resolve({ score: lastScore, mate: lastMate })
+          const parts = line.split(' ')
+          const bestMove = parts[1] && parts[1] !== '(none)' ? parts[1] : null
+          resolve({ score: lastScore, mate: lastMate, bestMove })
         }
       }
 

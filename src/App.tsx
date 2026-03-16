@@ -1,10 +1,12 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Chess } from 'chess.js'
 import { Chessboard } from 'react-chessboard'
 import { useStockfish } from './hooks/useStockfish'
 import { useChessClock } from './hooks/useChessClock'
 import { usePositionEval } from './hooks/usePositionEval'
 import { useComputerMove } from './hooks/useComputerMove'
+import { useSpeedPair } from './hooks/useSpeedPair'
+import { useOnlineCount } from './hooks/useOnlineCount'
 import { buildAnalysis } from './utils/analysis'
 import type { GameAnalysisResult } from './utils/analysis'
 import Analysis from './components/Analysis'
@@ -12,19 +14,20 @@ import ClockDisplay from './components/ClockDisplay'
 import EvalBar from './components/EvalBar'
 import type { LiveEval } from './hooks/usePositionEval'
 
-type GameState = 'idle' | 'playing' | 'analyzing' | 'analyzed'
+type GameState = 'idle' | 'matching' | 'playing' | 'analyzing' | 'analyzed'
+
+const DIFFICULTIES = [
+  { label: 'Novice', elo: 800, description: '~800' },
+  { label: 'Enthusiast', elo: 1200, description: '~1200' },
+  { label: 'Expert', elo: 1800, description: '~1800' },
+  { label: 'Master', elo: 2200, description: '~2200' },
+]
 
 const TIME_CONTROLS = [
   { label: '1+0', seconds: 60, increment: 0 },
-  { label: '2+1', seconds: 120, increment: 1 },
   { label: '3+0', seconds: 180, increment: 0 },
-  { label: '3+2', seconds: 180, increment: 2 },
   { label: '5+0', seconds: 300, increment: 0 },
-  { label: '5+3', seconds: 300, increment: 3 },
   { label: '10+0', seconds: 600, increment: 0 },
-  { label: '10+5', seconds: 600, increment: 5 },
-  { label: '15+10', seconds: 900, increment: 10 },
-  { label: '30+0', seconds: 1800, increment: 0 },
 ]
 
 export default function App() {
@@ -35,20 +38,30 @@ export default function App() {
   const [analysisResult, setAnalysisResult] = useState<GameAnalysisResult | null>(null)
   const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0 })
   const [gameOverMsg, setGameOverMsg] = useState('')
-  const [selectedTC, setSelectedTC] = useState(4) // default 5+0
+  const [selectedTC, setSelectedTC] = useState(2) // default 5+0
   const [clockEnabled, setClockEnabled] = useState(true)
+  const [gameMode, setGameMode] = useState<'computer' | 'speed-pair'>('computer')
   const [playerColor, setPlayerColor] = useState<'white' | 'black'>('white')
+  const [selectedDifficulty, setSelectedDifficulty] = useState(1) // default Enthusiast
   const [liveEval, setLiveEval] = useState<LiveEval | null>(null)
   const [computerThinking, setComputerThinking] = useState(false)
   const [reviewMoveIndex, setReviewMoveIndex] = useState<number | null>(null)
   const [analysisFens, setAnalysisFens] = useState<string[]>([])
   const [moveSquaresHistory, setMoveSquaresHistory] = useState<{ from: string; to: string }[]>([])
+  const [analysisPlayerColor, setAnalysisPlayerColor] = useState<'white' | 'black'>('white')
+
+  // Refs that mirror state so async functions always see current values
+  const fenHistoryRef = useRef<string[]>([new Chess().fen()])
+  const moveHistoryRef = useRef<string[]>([])
+  const moveSquaresHistoryRef = useRef<{ from: string; to: string }[]>([])
 
   const tc = TIME_CONTROLS[selectedTC]
   const clock = useChessClock(tc.seconds, tc.increment)
   const { analyzeGame, destroy } = useStockfish()
   const { evaluate: evalPosition, stop: stopEval } = usePositionEval((ev) => setLiveEval(ev))
   const { getMove: getComputerMove } = useComputerMove()
+  const speedPair = useSpeedPair()
+  const onlineCount = useOnlineCount()
 
   useEffect(() => () => destroy(), [destroy])
 
@@ -56,11 +69,21 @@ export default function App() {
   useEffect(() => {
     if (gameState === 'analyzed' && analysisResult) {
       const firstError = analysisResult.moves.findIndex(
-        (m) => m.player === playerColor && (m.classification === 'mistake' || m.classification === 'blunder')
+        (m) => m.player === analysisPlayerColor && (m.classification === 'mistake' || m.classification === 'blunder')
       )
       if (firstError !== -1) setReviewMoveIndex(firstError)
     }
-  }, [gameState, analysisResult])
+  }, [gameState, analysisResult, analysisPlayerColor])
+
+  // Handle opponent resignation in Speed Pair
+  useEffect(() => {
+    if (speedPair.opponentResigned && gameState === 'playing') {
+      setGameOverMsg('Opponent resigned. You win!')
+      clock.stop()
+      stopEval()
+      triggerAnalysis(fenHistoryRef.current, moveHistoryRef.current, speedPair.match?.myColor ?? 'white')
+    }
+  }, [speedPair.opponentResigned]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle flag (timeout)
   useEffect(() => {
@@ -69,7 +92,7 @@ export default function App() {
       const msg = `${winner} wins on time!`
       setGameOverMsg(msg)
       clock.stop()
-      triggerAnalysis(fenHistory, moveHistory)
+      triggerAnalysis(fenHistory, moveHistory, gameMode === 'computer' ? playerColor : 'white')
     }
   }, [clock.flagged]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -84,45 +107,91 @@ export default function App() {
 
   const computerColor = playerColor === 'white' ? 'black' : 'white'
 
+  // Ref-based pattern so the effect can always call the latest version of this function
+  const applyOpponentMoveRef = useRef<(san: string) => void>(() => {})
+  applyOpponentMoveRef.current = (san: string) => {
+    const currentFen = fenHistoryRef.current[fenHistoryRef.current.length - 1]
+    const g = new Chess(currentFen)
+    try {
+      const move = g.move(san)
+      if (!move) return
+      const movedColor: 'white' | 'black' = move.color === 'w' ? 'white' : 'black'
+      const newFenHistory = [...fenHistoryRef.current, g.fen()]
+      const newMoveHistory = [...moveHistoryRef.current, move.san]
+      const newMoveSquaresHistory = [...moveSquaresHistoryRef.current, { from: move.from, to: move.to }]
+      fenHistoryRef.current = newFenHistory
+      moveHistoryRef.current = newMoveHistory
+      moveSquaresHistoryRef.current = newMoveSquaresHistory
+      setGame(g)
+      setFenHistory(newFenHistory)
+      setMoveHistory(newMoveHistory)
+      setMoveSquaresHistory(newMoveSquaresHistory)
+      if (clockEnabled) clock.onMove(movedColor)
+      evalPosition(g.fen())
+      const overMsg = checkGameOver(g)
+      if (overMsg) {
+        setGameOverMsg(overMsg)
+        clock.stop()
+        stopEval()
+        triggerAnalysis(newFenHistory, newMoveHistory, playerColor)
+      }
+    } catch {
+      console.error('Failed to apply opponent move:', san)
+    }
+  }
+
+  // When Speed Pair match is found, start the game
+  useEffect(() => {
+    if (speedPair.status === 'matched' && speedPair.match && gameState === 'matching') {
+      setPlayerColor(speedPair.match.myColor)
+      setGameState('playing')
+      if (clockEnabled) clock.start()
+    }
+  }, [speedPair.status, speedPair.match, gameState]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apply pending opponent moves in Speed Pair
+  useEffect(() => {
+    if (!speedPair.pendingOpponentMove || gameState !== 'playing' || gameMode !== 'speed-pair') return
+    applyOpponentMoveRef.current(speedPair.pendingOpponentMove)
+    speedPair.clearPendingMove()
+  }, [speedPair.pendingOpponentMove, gameState, gameMode]) // eslint-disable-line react-hooks/exhaustive-deps
+
   async function triggerComputerMove(fen: string) {
     setComputerThinking(true)
     try {
-      const uciMove = await getComputerMove(fen)
+      const uciMove = await getComputerMove(fen, DIFFICULTIES[selectedDifficulty].elo)
       const from = uciMove.substring(0, 2)
       const to = uciMove.substring(2, 4)
       const promotion = uciMove[4] || 'q'
 
-      setGame((prev) => {
-        const g = new Chess(prev.fen())
-        const move = g.move({ from, to, promotion })
-        if (!move) return prev
+      const g = new Chess(fen)
+      const move = g.move({ from, to, promotion })
+      if (!move) return
 
-        const movedColor: 'white' | 'black' = move.color === 'w' ? 'white' : 'black'
-        setMoveHistory((h) => [...h, move.san])
-        setFenHistory((h) => [...h, g.fen()])
-        setMoveSquaresHistory((h) => [...h, { from, to }])
-        if (clockEnabled) clock.onMove(movedColor)
-        evalPosition(g.fen())
+      const movedColor: 'white' | 'black' = move.color === 'w' ? 'white' : 'black'
+      const newFenHistory = [...fenHistoryRef.current, g.fen()]
+      const newMoveHistory = [...moveHistoryRef.current, move.san]
+      const newMoveSquaresHistory = [...moveSquaresHistoryRef.current, { from, to }]
 
-        const overMsg = checkGameOver(g)
-        if (overMsg) {
-          setGameOverMsg(overMsg)
-          clock.stop()
-          stopEval()
-          // Use a ref snapshot for analysis — gathered from updated state in next render
-          setTimeout(() => {
-            setFenHistory((fens) => {
-              setMoveHistory((moves) => {
-                triggerAnalysis(fens, moves)
-                return moves
-              })
-              return fens
-            })
-          }, 0)
-        }
+      fenHistoryRef.current = newFenHistory
+      moveHistoryRef.current = newMoveHistory
+      moveSquaresHistoryRef.current = newMoveSquaresHistory
 
-        return g
-      })
+      setGame(g)
+      setFenHistory(newFenHistory)
+      setMoveHistory(newMoveHistory)
+      setMoveSquaresHistory(newMoveSquaresHistory)
+
+      if (clockEnabled) clock.onMove(movedColor)
+      evalPosition(g.fen())
+
+      const overMsg = checkGameOver(g)
+      if (overMsg) {
+        setGameOverMsg(overMsg)
+        clock.stop()
+        stopEval()
+        triggerAnalysis(newFenHistory, newMoveHistory, playerColor)
+      }
     } catch {
       // computer had no move
     } finally {
@@ -131,18 +200,25 @@ export default function App() {
   }
 
   function handleStartGame() {
+    if (gameMode === 'speed-pair') {
+      setGameState('matching')
+      speedPair.joinPool(tc.label)
+      return
+    }
     setGameState('playing')
     if (clockEnabled) clock.start()
-    // If player chose black, computer (white) goes first
-    if (playerColor === 'black') {
+    // If playing vs computer and player chose black, computer (white) goes first
+    if (gameMode === 'computer' && playerColor === 'black') {
       triggerComputerMove(new Chess().fen())
     }
   }
 
   function onDrop({ sourceSquare, targetSquare }: { piece: unknown; sourceSquare: string; targetSquare: string | null }) {
     if (gameState !== 'playing' || computerThinking) return false
-    // Block if it's the computer's turn
-    if ((game.turn() === 'w') === (computerColor === 'white')) return false
+    // In computer mode, block moves for the computer's color
+    if (gameMode === 'computer' && (game.turn() === 'w') === (computerColor === 'white')) return false
+    // In speed-pair mode, block moves when it's the opponent's turn
+    if (gameMode === 'speed-pair' && ((game.turn() === 'w') !== (playerColor === 'white'))) return false
     if (!targetSquare) return false
 
     try {
@@ -153,11 +229,16 @@ export default function App() {
       const movedColor: 'white' | 'black' = move.color === 'w' ? 'white' : 'black'
       const newFenHistory = [...fenHistory, gameCopy.fen()]
       const newMoveHistory = [...moveHistory, move.san]
+      const newMoveSquaresHistory = [...moveSquaresHistory, { from: sourceSquare, to: targetSquare }]
+
+      fenHistoryRef.current = newFenHistory
+      moveHistoryRef.current = newMoveHistory
+      moveSquaresHistoryRef.current = newMoveSquaresHistory
 
       setGame(gameCopy)
       setMoveHistory(newMoveHistory)
       setFenHistory(newFenHistory)
-      setMoveSquaresHistory((prev) => [...prev, { from: sourceSquare, to: targetSquare }])
+      setMoveSquaresHistory(newMoveSquaresHistory)
 
       // Switch clock after move
       if (clockEnabled) clock.onMove(movedColor)
@@ -165,14 +246,16 @@ export default function App() {
       // Update live eval
       evalPosition(gameCopy.fen())
 
+      // In Speed Pair, send the move to Firebase
+      if (gameMode === 'speed-pair') speedPair.sendMove(move.san)
+
       const overMsg = checkGameOver(gameCopy)
       if (overMsg) {
         setGameOverMsg(overMsg)
         clock.stop()
         stopEval()
-        triggerAnalysis(newFenHistory, newMoveHistory)
-      } else {
-        // Trigger computer response
+        triggerAnalysis(newFenHistory, newMoveHistory, gameMode === 'computer' ? playerColor : 'white')
+      } else if (gameMode === 'computer') {
         triggerComputerMove(gameCopy.fen())
       }
 
@@ -182,8 +265,9 @@ export default function App() {
     }
   }
 
-  async function triggerAnalysis(fens: string[], moves: string[]) {
+  async function triggerAnalysis(fens: string[], moves: string[], pColor: 'white' | 'black') {
     setGameState('analyzing')
+    setAnalysisPlayerColor(pColor)
     setAnalysisProgress({ current: 0, total: fens.length })
     const evals = await analyzeGame(fens, (current, total) => {
       setAnalysisProgress({ current, total })
@@ -195,7 +279,11 @@ export default function App() {
   }
 
   function handleNewGame() {
+    speedPair.leavePool()
     const newGame = new Chess()
+    fenHistoryRef.current = [newGame.fen()]
+    moveHistoryRef.current = []
+    moveSquaresHistoryRef.current = []
     setGame(newGame)
     setGameState('idle')
     setMoveHistory([])
@@ -209,6 +297,7 @@ export default function App() {
     setAnalysisFens([])
     setMoveSquaresHistory([])
     setComputerThinking(false)
+    setAnalysisPlayerColor('white')
   }
 
   // Reset clock when time control changes (only when idle)
@@ -219,9 +308,10 @@ export default function App() {
     }
   }
 
-  // Board position: show reviewed move position, or current game position
-  const displayFen = reviewMoveIndex !== null && analysisFens[reviewMoveIndex + 1]
-    ? analysisFens[reviewMoveIndex + 1]
+  // Board position: show the position BEFORE the reviewed move (so best-move arrow makes sense),
+  // or current game position during play.
+  const displayFen = reviewMoveIndex !== null && analysisFens[reviewMoveIndex]
+    ? analysisFens[reviewMoveIndex]
     : game.fen()
 
   // Last move highlight: during review use that move's squares, otherwise use the latest move
@@ -243,27 +333,62 @@ export default function App() {
     if (kingSquare) squareStyles[kingSquare.square] = { backgroundColor: 'rgba(255,0,0,0.4)' }
   }
 
+  // Arrows: green for best move, red for the actual move played (when reviewing)
+  const reviewArrows = (() => {
+    if (reviewMoveIndex === null || !analysisResult) return []
+    const arrows = []
+    const uci = analysisResult.moves[reviewMoveIndex]?.bestMove
+    if (uci && uci.length >= 4) {
+      arrows.push({ startSquare: uci.substring(0, 2), endSquare: uci.substring(2, 4), color: 'rgba(16, 185, 129, 0.85)' })
+    }
+    const played = moveSquaresHistory[reviewMoveIndex]
+    if (played) {
+      arrows.push({ startSquare: played.from, endSquare: played.to, color: 'rgba(239, 68, 68, 0.85)' })
+    }
+    return arrows
+  })()
+
   const isPlaying = gameState === 'playing'
 
   return (
-    <div className="min-h-screen bg-gray-900 flex items-start justify-center p-6">
-      <div className="flex gap-8 w-full max-w-5xl">
+    <div className="min-h-screen bg-gray-950 flex items-start justify-center p-6">
+      <div className="flex gap-6 w-full max-w-5xl">
         {/* Board column */}
-        <div className="flex flex-col gap-3">
-          <h1 className="text-2xl font-bold text-white">Evaluchess</h1>
+        <div className="flex flex-col gap-2 shrink-0" style={{ width: 548 }}>
+          <div className="flex items-center gap-2.5 mb-1">
+            <span className="text-2xl leading-none">♟</span>
+            <h1 className="text-xl font-bold text-white tracking-tight">Evaluchess</h1>
+          </div>
 
           {/* Opponent clock (top) */}
           {(() => {
             const opponent = playerColor === 'white' ? 'black' : 'white'
+            const oppTimeMs = opponent === 'white' ? clock.timeWhite : clock.timeBlack
+            const oppActive = clock.activeColor === opponent && isPlaying
+            const oppFlagged = clock.flagged === opponent
             return (
-              <div className="flex items-center gap-3">
-                <div className={`w-4 h-4 rounded-full shrink-0 ${opponent === 'white' ? 'bg-white' : 'bg-gray-900 border border-gray-600'}`} />
-                <span className="text-gray-300 text-sm font-medium w-12 capitalize">{opponent}</span>
+              <div className={`w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-colors ${
+                oppActive ? 'bg-gray-800 border-gray-700' : 'bg-gray-800/40 border-gray-700/30'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-4 h-4 rounded-full shrink-0 ${opponent === 'white' ? 'bg-white shadow-sm' : 'bg-gray-950 border-2 border-gray-500'}`} />
+                  <div>
+                    <span className={`text-sm font-semibold ${oppActive ? 'text-white' : 'text-gray-500'}`}>
+                      {gameMode === 'computer' ? `Computer · ${DIFFICULTIES[selectedDifficulty].label}` : opponent === 'white' ? 'White' : 'Black'}
+                    </span>
+                  </div>
+                  {computerThinking && (
+                    <span className="flex items-center gap-1.5 text-xs text-indigo-400 font-medium">
+                      <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-pulse" />
+                      thinking…
+                    </span>
+                  )}
+                </div>
                 {clockEnabled && (
                   <ClockDisplay
-                    timeMs={opponent === 'white' ? clock.timeWhite : clock.timeBlack}
-                    isActive={clock.activeColor === opponent && isPlaying}
-                    isFlagged={clock.flagged === opponent}
+                    timeMs={oppTimeMs}
+                    isActive={oppActive}
+                    isFlagged={oppFlagged}
                     color={opponent}
                   />
                 )}
@@ -274,7 +399,7 @@ export default function App() {
           {/* Board + eval bar */}
           <div className="flex gap-2 items-stretch">
             <EvalBar ev={liveEval} height={500} />
-            <div className="rounded-2xl overflow-hidden shadow-2xl" style={{ width: 500, height: 500 }}>
+            <div className="rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/5" style={{ width: 500, height: 500 }}>
               <Chessboard
                 key={reviewMoveIndex !== null ? `review-${reviewMoveIndex}` : 'game'}
                 options={{
@@ -282,6 +407,7 @@ export default function App() {
                   boardOrientation: playerColor,
                   onPieceDrop: isPlaying ? onDrop : undefined,
                   squareStyles,
+                  arrows: reviewArrows,
                   boardStyle: { borderRadius: '4px' },
                   darkSquareStyle: { backgroundColor: '#769656' },
                   lightSquareStyle: { backgroundColor: '#eeeed2' },
@@ -292,23 +418,36 @@ export default function App() {
           </div>
 
           {/* Player clock (bottom) */}
-          <div className="flex items-center gap-3">
-            <div className={`w-4 h-4 rounded-full shrink-0 ${playerColor === 'white' ? 'bg-white' : 'bg-gray-900 border border-gray-600'}`} />
-            <span className="text-gray-300 text-sm font-medium w-12 capitalize">{playerColor}</span>
-            {clockEnabled && (
-              <ClockDisplay
-                timeMs={playerColor === 'white' ? clock.timeWhite : clock.timeBlack}
-                isActive={clock.activeColor === playerColor && isPlaying}
-                isFlagged={clock.flagged === playerColor}
-                color={playerColor}
-              />
-            )}
-          </div>
+          {(() => {
+            const playerTimeMs = playerColor === 'white' ? clock.timeWhite : clock.timeBlack
+            const playerActive = clock.activeColor === playerColor && isPlaying
+            const playerFlagged = clock.flagged === playerColor
+            return (
+              <div className={`w-full flex items-center justify-between rounded-xl px-4 py-3 border transition-colors ${
+                playerActive ? 'bg-gray-800 border-gray-700' : 'bg-gray-800/40 border-gray-700/30'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-4 h-4 rounded-full shrink-0 ${playerColor === 'white' ? 'bg-white shadow-sm' : 'bg-gray-950 border-2 border-gray-500'}`} />
+                  <span className={`text-sm font-semibold ${playerActive ? 'text-white' : 'text-gray-500'}`}>
+                    {gameMode === 'computer' ? 'You' : playerColor === 'white' ? 'White' : 'Black'}
+                  </span>
+                </div>
+                {clockEnabled && (
+                  <ClockDisplay
+                    timeMs={playerTimeMs}
+                    isActive={playerActive}
+                    isFlagged={playerFlagged}
+                    color={playerColor}
+                  />
+                )}
+              </div>
+            )
+          })()}
 
           {/* Move list */}
           {moveHistory.length > 0 && (
-            <div className="bg-gray-800 rounded-xl p-4">
-              <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Moves</div>
+            <div className="bg-gray-800/50 rounded-xl p-3 border border-gray-700/40">
+              <div className="text-gray-500 text-xs font-medium uppercase tracking-widest mb-2">Moves</div>
               <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
                 {moveHistory.map((move, i) => (
                   <span key={i} className="text-sm font-mono">
@@ -327,7 +466,55 @@ export default function App() {
         <div className="flex-1 min-w-64 flex flex-col gap-4">
           {/* Configurator — idle only */}
           {gameState === 'idle' && (
-            <div className="bg-gray-800 rounded-xl p-4 flex flex-col gap-4">
+            <div className="bg-gray-800/80 rounded-xl p-4 border border-gray-700/50 flex flex-col gap-4">
+              {/* Mode selector */}
+              <div className="flex gap-1 bg-gray-900 p-1 rounded-lg">
+                {(['computer', 'speed-pair'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setGameMode(mode)}
+                    className={`flex-1 py-2 rounded-md text-sm font-semibold transition-colors ${
+                      gameMode === mode
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    {mode === 'computer' ? 'Computer' : (
+                      <span className="flex items-center justify-center gap-1.5">
+                        Speed Pair
+                        <span className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-normal ${gameMode === mode ? 'bg-indigo-500/60 text-indigo-100' : 'bg-gray-700 text-gray-400'}`}>
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
+                          {onlineCount}
+                        </span>
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {/* Difficulty selector — computer mode only */}
+              {gameMode === 'computer' && (
+                <div>
+                  <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Computer Difficulty</div>
+                  <div className="grid grid-cols-2 gap-1">
+                    {DIFFICULTIES.map((d, i) => (
+                      <button
+                        key={d.label}
+                        onClick={() => setSelectedDifficulty(i)}
+                        className={`py-2 px-3 rounded-lg text-sm font-medium transition-colors text-left ${
+                          selectedDifficulty === i
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        }`}
+                      >
+                        <div>{d.label}</div>
+                        <div className={`text-xs ${selectedDifficulty === i ? 'text-indigo-200' : 'text-gray-500'}`}>{d.description}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Time control */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -341,7 +528,7 @@ export default function App() {
                     {clockEnabled ? 'On' : 'Off'}
                   </button>
                 </div>
-                <div className="grid grid-cols-5 gap-1">
+                <div className="grid grid-cols-4 gap-1">
                   {TIME_CONTROLS.map((tc, i) => (
                     <button
                       key={tc.label}
@@ -358,26 +545,28 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Color selector */}
-              <div>
-                <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Play as</div>
-                <div className="flex gap-2">
-                  {(['white', 'black'] as const).map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => setPlayerColor(c)}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        playerColor === c
-                          ? 'bg-indigo-600 text-white'
-                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                      }`}
-                    >
-                      <div className={`w-3 h-3 rounded-full ${c === 'white' ? 'bg-white' : 'bg-gray-900 border border-gray-400'}`} />
-                      <span className="capitalize">{c}</span>
-                    </button>
-                  ))}
+              {/* Color selector — computer mode only */}
+              {gameMode === 'computer' && (
+                <div>
+                  <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Play as</div>
+                  <div className="flex gap-2">
+                    {(['white', 'black'] as const).map((c) => (
+                      <button
+                        key={c}
+                        onClick={() => setPlayerColor(c)}
+                        className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          playerColor === c
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        }`}
+                      >
+                        <div className={`w-3 h-3 rounded-full ${c === 'white' ? 'bg-white' : 'bg-gray-900 border border-gray-400'}`} />
+                        <span className="capitalize">{c}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <button
                 onClick={handleStartGame}
@@ -388,25 +577,57 @@ export default function App() {
             </div>
           )}
 
+          {/* Matchmaking panel */}
+          {gameState === 'matching' && (
+            <div className="bg-gray-800/80 border border-gray-700/50 rounded-xl p-6 flex flex-col items-center gap-4 text-center">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" style={{ animationDelay: '0ms' }} />
+                <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" style={{ animationDelay: '200ms' }} />
+                <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" style={{ animationDelay: '400ms' }} />
+              </div>
+              <div>
+                <div className="text-white font-semibold text-base mb-1">Looking for a human opponent…</div>
+                <div className="flex items-center justify-center gap-1.5 text-sm text-gray-400 mb-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
+                  <span>{onlineCount} player{onlineCount !== 1 ? 's' : ''} online</span>
+                </div>
+                <div className="text-gray-400 text-sm leading-relaxed">
+                  If this takes too long, try playing against the computer.
+                </div>
+              </div>
+              <button
+                onClick={() => { speedPair.leavePool(); setGameState('idle') }}
+                className="text-sm text-gray-500 hover:text-gray-300 underline transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
           {/* In-game panel */}
           {gameState === 'playing' && (
-            <div className="bg-gray-800 rounded-xl p-4 flex flex-col gap-3">
-              {computerThinking ? (
+            <div className="bg-gray-800/80 border border-gray-700/50 rounded-xl p-4 flex flex-col gap-3">
+              {!computerThinking && (
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
-                  <span className="text-gray-300 text-sm">Computer thinking...</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <div className={`w-3 h-3 rounded-full ${game.turn() === 'w' ? 'bg-white' : 'bg-gray-900 border border-gray-400'}`} />
-                  <span className="text-gray-300 text-sm">
-                    {game.turn() === 'w' ? "White's turn" : "Black's turn"}
+                  <div className={`w-2.5 h-2.5 rounded-full ${game.turn() === 'w' ? 'bg-white' : 'bg-gray-400'}`} />
+                  <span className="text-gray-300 text-sm font-medium">
+                    {game.turn() === 'w' ? "White to move" : "Black to move"}
                   </span>
                 </div>
               )}
               <button
-                onClick={handleNewGame}
-                className="w-full py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors"
+                onClick={async () => {
+                  if (gameMode === 'speed-pair') {
+                    await speedPair.resignGame()
+                    setGameOverMsg('You resigned.')
+                    clock.stop()
+                    stopEval()
+                    triggerAnalysis(fenHistoryRef.current, moveHistoryRef.current, speedPair.match?.myColor ?? 'white')
+                  } else {
+                    handleNewGame()
+                  }
+                }}
+                className="w-full py-2 bg-gray-700/80 hover:bg-gray-700 border border-gray-600/50 text-gray-300 hover:text-white text-sm font-medium rounded-lg transition-colors"
               >
                 Resign / New Game
               </button>
@@ -414,12 +635,12 @@ export default function App() {
           )}
 
           {gameState === 'analyzing' && (
-            <div className="bg-gray-800 rounded-xl p-6 text-center">
-              <div className="text-white font-semibold text-lg mb-1">{gameOverMsg}</div>
-              <div className="text-gray-400 mb-4">Analyzing with Stockfish...</div>
-              <div className="w-full bg-gray-700 rounded-full h-2 mb-2">
+            <div className="bg-gray-800/80 border border-gray-700/50 rounded-xl p-6 text-center">
+              <div className="text-white font-bold text-lg mb-1">{gameOverMsg}</div>
+              <div className="text-gray-400 text-sm mb-5">Analyzing with Stockfish…</div>
+              <div className="w-full bg-gray-700/60 rounded-full h-1.5 mb-3 overflow-hidden">
                 <div
-                  className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
+                  className="bg-indigo-500 h-1.5 rounded-full transition-all duration-300"
                   style={{
                     width: analysisProgress.total
                       ? `${(analysisProgress.current / analysisProgress.total) * 100}%`
@@ -427,7 +648,7 @@ export default function App() {
                   }}
                 />
               </div>
-              <div className="text-gray-500 text-sm">
+              <div className="text-gray-600 text-xs">
                 {analysisProgress.current} / {analysisProgress.total} positions
               </div>
             </div>
@@ -436,10 +657,16 @@ export default function App() {
           {gameState === 'analyzed' && analysisResult && (
             <>
               {gameOverMsg && (
-                <div className="bg-gray-800 rounded-xl p-3 text-center">
-                  <span className="text-white font-semibold">{gameOverMsg}</span>
+                <div className="bg-gray-800/80 border border-gray-700/50 rounded-xl px-4 py-3 text-center">
+                  <span className="text-white font-bold text-base">{gameOverMsg}</span>
                 </div>
               )}
+              <div className="bg-indigo-950/60 border border-indigo-800/60 rounded-xl p-3.5 flex gap-3 items-start">
+                <span className="text-indigo-400 text-base mt-0.5 shrink-0">💡</span>
+                <p className="text-sm text-indigo-200/90 leading-relaxed">
+                  We're now showing your first mistake in this game so you can learn from it. Feel free to look through your other moves to see their accuracy.
+                </p>
+              </div>
               <Analysis
                 result={analysisResult}
                 onNewGame={handleNewGame}

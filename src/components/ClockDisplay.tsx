@@ -38,8 +38,8 @@ export default function ClockDisplay({ timeMs, isActive, isFlagged, color }: Clo
       : 'text-gray-400'
 
   return (
-    <div className={`rounded-xl px-5 py-3 flex items-center justify-center transition-colors duration-200 ${bg}`}>
-      <span className={`font-mono text-3xl font-bold tabular-nums tracking-tight ${textColor}`}>
+    <div className={`rounded-xl px-4 py-2 flex items-center justify-center transition-colors duration-200 ${bg}`}>
+      <span className={`font-mono text-2xl font-bold tabular-nums tracking-tight ${textColor}`}>
         {isFlagged ? '0:00' : formatTime(timeMs)}
       </span>
     </div>
