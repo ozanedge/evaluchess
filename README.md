@@ -1,73 +1,32 @@
-# React + TypeScript + Vite
+# Evaluchess
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A chess app built for learning. Play against the computer or find a live human opponent, then get instant feedback on every game.
 
-Currently, two official plugins are available:
+**Live at [evaluchess.com](https://evaluchess.com)**
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Features
 
-## React Compiler
+### Learning-focused analysis
+- **Live evaluation bar** — see the engine's assessment of the position update in real time as you play
+- **Post-game review** — after every game, the app automatically jumps to your first mistake so you can study it immediately
+- **Move classification** — every move is labeled as Best, Good, Inaccuracy, Mistake, or Blunder with centipawn loss
+- **Best move arrow** — a green arrow shows what Stockfish recommended at each position
+- **Mistake arrow** — a red arrow shows the move you actually played, so you can compare directly
+- **Accuracy score** — get an overall accuracy percentage for the game, modeled after Chess.com's formula
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Game modes
+- **Computer** — play against Stockfish at four difficulty levels: Novice (~800), Enthusiast (~1200), Expert (~1800), or Master (~2200)
+- **Speed Pair** — get matched with a live human opponent automatically, no account needed
 
-## Expanding the ESLint configuration
+### Other
+- Chess clock with four time controls: 1+0, 3+0, 5+0, 10+0
+- Choose to play as White or Black against the computer
+- Online player count shown in real time
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Tech stack
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- React 19 + TypeScript + Vite
+- Tailwind CSS v4
+- Stockfish 18 (WASM) for engine analysis and computer moves
+- Upstash Redis + Vercel serverless functions for Speed Pair matchmaking
+- Deployed on Vercel
