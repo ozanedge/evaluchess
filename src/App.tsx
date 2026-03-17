@@ -75,6 +75,13 @@ export default function App() {
     }
   }, [gameState, analysisResult, analysisPlayerColor])
 
+  // Update eval bar when reviewing moves after game
+  useEffect(() => {
+    if (reviewMoveIndex === null || !analysisResult) return
+    const ev = analysisResult.moves[reviewMoveIndex]?.evalBefore
+    if (ev) setLiveEval({ score: ev.score, mate: ev.mate, depth: 0 })
+  }, [reviewMoveIndex, analysisResult])
+
   // Handle opponent resignation in Speed Pair
   useEffect(() => {
     if (speedPair.opponentResigned && gameState === 'playing') {
@@ -352,9 +359,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-950 flex items-start justify-center p-6">
-      <div className="flex gap-6 w-full max-w-5xl">
+      <div className="flex gap-6 w-full max-w-6xl">
         {/* Board column */}
-        <div className="flex flex-col gap-2 shrink-0" style={{ width: 548 }}>
+        <div className="flex flex-col gap-2 shrink-0" style={{ width: 660 }}>
           <div className="flex items-center gap-2.5 mb-1">
             <span className="text-2xl leading-none">♟</span>
             <h1 className="text-xl font-bold text-white tracking-tight">Evaluchess</h1>
@@ -398,8 +405,8 @@ export default function App() {
 
           {/* Board + eval bar */}
           <div className="flex gap-2 items-stretch">
-            <EvalBar ev={liveEval} height={500} />
-            <div className="rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/5" style={{ width: 500, height: 500 }}>
+            <EvalBar ev={liveEval} height={600} />
+            <div className="rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/5" style={{ width: 600, height: 600 }}>
               <Chessboard
                 key={reviewMoveIndex !== null ? `review-${reviewMoveIndex}` : 'game'}
                 options={{
