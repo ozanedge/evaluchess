@@ -1,25 +1,22 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { Redis } from '@upstash/redis'
-
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-})
+import { redis, checkRateLimit } from './_lib.js'
 
 const PRESENCE_KEY = 'evaluchess:presence'
 const STALE_MS = 30_000
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const { id } = req.method === 'POST' ? req.body : req.query as { id?: string }
+  if (!await checkRateLimit(req, res)) return
+
+  const id = req.method === 'POST'
+    ? (req.body as { id?: string })?.id
+    : (req.query as { id?: string })?.id
 
   const now = Date.now()
 
-  // Heartbeat: update this player's timestamp
   if (id) {
     await redis.hset(PRESENCE_KEY, { [id]: String(now) })
   }
 
-  // Count active players (seen in last 30s)
   const raw = await redis.hgetall(PRESENCE_KEY) as Record<string, string> | null
   if (!raw) return res.json({ count: 0 })
 

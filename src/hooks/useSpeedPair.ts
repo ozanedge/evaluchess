@@ -6,6 +6,7 @@ export interface SpeedPairMatch {
   gameId: string
   myColor: 'white' | 'black'
   opponentId: string
+  token: string
 }
 
 function getPlayerId(): string {
@@ -93,9 +94,9 @@ export function useSpeedPair() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: myId.current, tc: tcLabel }),
         })
-        const data = await res.json() as { matched: boolean; gameId?: string; myColor?: 'white' | 'black'; opponentId?: string }
-        if (data.matched && data.gameId) {
-          finaliseMatch({ gameId: data.gameId, myColor: data.myColor!, opponentId: data.opponentId! })
+        const data = await res.json() as { matched: boolean; gameId?: string; myColor?: 'white' | 'black'; opponentId?: string; token?: string }
+        if (data.matched && data.gameId && data.token) {
+          finaliseMatch({ gameId: data.gameId, myColor: data.myColor!, opponentId: data.opponentId!, token: data.token })
         }
       } catch { /* ignore */ }
     }
@@ -106,14 +107,14 @@ export function useSpeedPair() {
 
   // Signal resignation to opponent without resetting state (call before analysis)
   const resignGame = useCallback(async () => {
-    const gameId = matchRef.current?.gameId
-    if (!gameId) return
+    const m = matchRef.current
+    if (!m) return
     stopPolling()
     try {
       await fetch('/api/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gameId, resign: true }),
+        body: JSON.stringify({ gameId: m.gameId, resign: true, playerId: myId.current, token: m.token }),
       })
     } catch { /* ignore */ }
   }, [stopPolling])
@@ -141,7 +142,7 @@ export function useSpeedPair() {
     fetch('/api/move', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gameId: m.gameId, san }),
+      body: JSON.stringify({ gameId: m.gameId, san, playerId: myId.current, token: m.token }),
     }).catch(() => {})
   }, [])
 
