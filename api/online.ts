@@ -44,7 +44,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     statusCode = 500; body = { error: 'internal error' }
   } finally {
     span.end()
-    await flush()
+    flush()
   }
 
   if (statusCode === 429) return
