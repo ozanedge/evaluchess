@@ -8,6 +8,8 @@ import { useComputerMove } from './hooks/useComputerMove'
 import { useSpeedPair } from './hooks/useSpeedPair'
 import { useOnlineCount } from './hooks/useOnlineCount'
 import { buildAnalysis } from './utils/analysis'
+import { clientLog } from './lib/clientLog'
+import { clientMetric } from './lib/clientMetric'
 import type { GameAnalysisResult } from './utils/analysis'
 import Analysis from './components/Analysis'
 import ClockDisplay from './components/ClockDisplay'
@@ -15,6 +17,22 @@ import EvalBar from './components/EvalBar'
 import type { LiveEval } from './hooks/usePositionEval'
 
 type GameState = 'idle' | 'matching' | 'playing' | 'analyzing' | 'analyzed'
+
+function buildMoveMetrics(
+  source: string, gameMode: string, moveNumber: number,
+  moveTimeMs: number, clockRemainingMs: number,
+  evalScore: number | null, evalDepth: number | null,
+  extraAttrs: Record<string, string | number | boolean> = {}
+) {
+  const attrs = { source, gameMode, ...extraAttrs }
+  return [
+    ...(evalScore !== null ? [{ name: 'chess.eval_cp', value: evalScore, attrs }] : []),
+    ...(evalDepth !== null ? [{ name: 'chess.eval_depth', value: evalDepth, attrs }] : []),
+    { name: 'chess.move_time_ms', value: moveTimeMs, attrs },
+    { name: 'chess.clock_remaining_ms', value: clockRemainingMs, attrs },
+    { name: 'chess.game_move_count', value: moveNumber, attrs },
+  ]
+}
 
 const DIFFICULTIES = [
   { label: 'Novice', elo: 800, description: '~800' },
@@ -49,16 +67,52 @@ export default function App() {
   const [analysisFens, setAnalysisFens] = useState<string[]>([])
   const [moveSquaresHistory, setMoveSquaresHistory] = useState<{ from: string; to: string }[]>([])
   const [analysisPlayerColor, setAnalysisPlayerColor] = useState<'white' | 'black'>('white')
+  const [lastMoveEvalSnapshot, setLastMoveEvalSnapshot] = useState<{ score: number; mate: number | null } | null>(null)
+  const [lastMovedColor, setLastMovedColor] = useState<'white' | 'black' | null>(null)
 
   // Refs that mirror state so async functions always see current values
   const fenHistoryRef = useRef<string[]>([new Chess().fen()])
   const moveHistoryRef = useRef<string[]>([])
   const moveSquaresHistoryRef = useRef<{ from: string; to: string }[]>([])
+  const gameRef = useRef(game)
+  const computerThinkingRef = useRef(false)
+  const gameStateRef = useRef<GameState>('idle')
+  const gameModeRef = useRef<'computer' | 'speed-pair'>('computer')
+  const liveEvalRef = useRef<LiveEval | null>(null)
+  const lastMoveTimestampRef = useRef<number>(0)
+  const [premove, setPremove] = useState<{ from: string; to: string } | null>(null)
+  const premoveRef = useRef<{ from: string; to: string } | null>(null)
+  const [selectedSquare, setSelectedSquare] = useState<string | null>(null)
+  const [legalMoveSquares, setLegalMoveSquares] = useState<Set<string>>(new Set())
+  const [boardSize, setBoardSize] = useState(600)
+
+  useEffect(() => {
+    const EVAL_BAR = 28
+    const GAP = 8
+    const update = () => {
+      const available = window.innerWidth - 32 // 16px padding each side on mobile
+      const size = Math.min(600, available - EVAL_BAR - GAP)
+      setBoardSize(Math.max(280, size))
+    }
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+
+  // Keep refs in sync with state so onDrop always reads fresh values
+  gameRef.current = game
+  computerThinkingRef.current = computerThinking
+  gameStateRef.current = gameState
+  gameModeRef.current = gameMode
+  premoveRef.current = premove
 
   const tc = TIME_CONTROLS[selectedTC]
   const clock = useChessClock(tc.seconds, tc.increment)
   const { analyzeGame, destroy } = useStockfish()
-  const { evaluate: evalPosition, stop: stopEval } = usePositionEval((ev) => setLiveEval(ev))
+  const { evaluate: evalPosition, stop: stopEval } = usePositionEval((ev) => {
+    liveEvalRef.current = ev
+    setLiveEval(ev)
+  })
   const { getMove: getComputerMove } = useComputerMove()
   const speedPair = useSpeedPair()
   const onlineCount = useOnlineCount()
@@ -99,7 +153,7 @@ export default function App() {
       const msg = `${winner} wins on time!`
       setGameOverMsg(msg)
       clock.stop()
-      triggerAnalysis(fenHistory, moveHistory, gameMode === 'computer' ? playerColor : 'white')
+      triggerAnalysis(fenHistoryRef.current, moveHistoryRef.current, playerColor)
     }
   }, [clock.flagged]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -134,13 +188,32 @@ export default function App() {
       setMoveHistory(newMoveHistory)
       setMoveSquaresHistory(newMoveSquaresHistory)
       if (clockEnabled) clock.onMove(movedColor)
+      setLastMoveEvalSnapshot(liveEvalRef.current ? { score: liveEvalRef.current.score, mate: liveEvalRef.current.mate } : null)
+      setLastMovedColor(movedColor)
       evalPosition(g.fen())
+      const _oppMoveTimeMs = lastMoveTimestampRef.current ? Date.now() - lastMoveTimestampRef.current : 0
+      lastMoveTimestampRef.current = Date.now()
+      const _oppClockMs = clockEnabled ? (playerColor === 'white' ? clock.timeBlack : clock.timeWhite) : 0
+      clientLog('info', 'client move played', {
+        san: move.san, fen: g.fen(), moveNumber: newMoveHistory.length,
+        source: 'opponent', gameMode: gameModeRef.current,
+        moveTimeMs: _oppMoveTimeMs, clockRemainingMs: _oppClockMs,
+        ...(speedPair.match ? { gameId: speedPair.match.gameId } : {}),
+        ...(liveEvalRef.current ? { evalCp: liveEvalRef.current.score, evalDepth: liveEvalRef.current.depth, ...(liveEvalRef.current.mate !== null ? { evalMate: liveEvalRef.current.mate } : {}) } : {}),
+      })
+      clientMetric(buildMoveMetrics(
+        'opponent', gameModeRef.current, newMoveHistory.length, _oppMoveTimeMs, _oppClockMs,
+        liveEvalRef.current?.score ?? null, liveEvalRef.current?.depth ?? null,
+        speedPair.match ? { gameId: speedPair.match.gameId } : {}
+      ))
       const overMsg = checkGameOver(g)
       if (overMsg) {
         setGameOverMsg(overMsg)
         clock.stop()
         stopEval()
         triggerAnalysis(newFenHistory, newMoveHistory, playerColor)
+      } else {
+        tryPremove(g)
       }
     } catch {
       console.error('Failed to apply opponent move:', san)
@@ -162,6 +235,57 @@ export default function App() {
     applyOpponentMoveRef.current(speedPair.pendingOpponentMove)
     speedPair.clearPendingMove()
   }, [speedPair.pendingOpponentMove, gameState, gameMode]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function tryPremove(currentGame: InstanceType<typeof Chess>) {
+    const pm = premoveRef.current
+    if (!pm) return
+    setPremove(null)
+    try {
+      const gameCopy = new Chess(currentGame.fen())
+      const move = gameCopy.move({ from: pm.from, to: pm.to, promotion: 'q' })
+      if (!move) return
+      const movedColor: 'white' | 'black' = move.color === 'w' ? 'white' : 'black'
+      const newFenHistory = [...fenHistoryRef.current, gameCopy.fen()]
+      const newMoveHistory = [...moveHistoryRef.current, move.san]
+      const newMoveSquaresHistory = [...moveSquaresHistoryRef.current, { from: pm.from, to: pm.to }]
+      fenHistoryRef.current = newFenHistory
+      moveHistoryRef.current = newMoveHistory
+      moveSquaresHistoryRef.current = newMoveSquaresHistory
+      setGame(gameCopy)
+      setFenHistory(newFenHistory)
+      setMoveHistory(newMoveHistory)
+      setMoveSquaresHistory(newMoveSquaresHistory)
+      if (clockEnabled) clock.onMove(movedColor)
+      setLastMoveEvalSnapshot(liveEvalRef.current ? { score: liveEvalRef.current.score, mate: liveEvalRef.current.mate } : null)
+      setLastMovedColor(movedColor)
+      evalPosition(gameCopy.fen())
+      if (gameModeRef.current === 'speed-pair') speedPair.sendMove(move.san)
+      const _preMoveTimeMs = lastMoveTimestampRef.current ? Date.now() - lastMoveTimestampRef.current : 0
+      lastMoveTimestampRef.current = Date.now()
+      const _preClockMs = clockEnabled ? (playerColor === 'white' ? clock.timeWhite : clock.timeBlack) : 0
+      clientLog('info', 'client move played', {
+        san: move.san, fen: gameCopy.fen(), moveNumber: newMoveHistory.length,
+        source: 'premove', gameMode: gameModeRef.current,
+        moveTimeMs: _preMoveTimeMs, clockRemainingMs: _preClockMs,
+        ...(gameModeRef.current === 'speed-pair' && speedPair.match ? { gameId: speedPair.match.gameId } : {}),
+        ...(liveEvalRef.current ? { evalCp: liveEvalRef.current.score, evalDepth: liveEvalRef.current.depth, ...(liveEvalRef.current.mate !== null ? { evalMate: liveEvalRef.current.mate } : {}) } : {}),
+      })
+      clientMetric(buildMoveMetrics(
+        'premove', gameModeRef.current, newMoveHistory.length, _preMoveTimeMs, _preClockMs,
+        liveEvalRef.current?.score ?? null, liveEvalRef.current?.depth ?? null,
+        gameModeRef.current === 'speed-pair' && speedPair.match ? { gameId: speedPair.match.gameId } : {}
+      ))
+      const overMsg = checkGameOver(gameCopy)
+      if (overMsg) {
+        setGameOverMsg(overMsg)
+        clock.stop()
+        stopEval()
+        triggerAnalysis(newFenHistory, newMoveHistory, playerColor)
+      } else if (gameModeRef.current === 'computer') {
+        triggerComputerMove(gameCopy.fen())
+      }
+    } catch { /* premove was illegal — silently discard */ }
+  }
 
   async function triggerComputerMove(fen: string) {
     setComputerThinking(true)
@@ -190,7 +314,23 @@ export default function App() {
       setMoveSquaresHistory(newMoveSquaresHistory)
 
       if (clockEnabled) clock.onMove(movedColor)
+      setLastMoveEvalSnapshot(liveEvalRef.current ? { score: liveEvalRef.current.score, mate: liveEvalRef.current.mate } : null)
+      setLastMovedColor(movedColor)
       evalPosition(g.fen())
+      const _compMoveTimeMs = lastMoveTimestampRef.current ? Date.now() - lastMoveTimestampRef.current : 0
+      lastMoveTimestampRef.current = Date.now()
+      const _compClockMs = clockEnabled ? (playerColor === 'white' ? clock.timeBlack : clock.timeWhite) : 0
+      clientLog('info', 'client move played', {
+        san: move.san, fen: g.fen(), moveNumber: newMoveHistory.length,
+        source: 'computer', gameMode: 'computer', elo: DIFFICULTIES[selectedDifficulty].elo,
+        moveTimeMs: _compMoveTimeMs, clockRemainingMs: _compClockMs,
+        ...(liveEvalRef.current ? { evalCp: liveEvalRef.current.score, evalDepth: liveEvalRef.current.depth, ...(liveEvalRef.current.mate !== null ? { evalMate: liveEvalRef.current.mate } : {}) } : {}),
+      })
+      clientMetric(buildMoveMetrics(
+        'computer', 'computer', newMoveHistory.length, _compMoveTimeMs, _compClockMs,
+        liveEvalRef.current?.score ?? null, liveEvalRef.current?.depth ?? null,
+        { elo: DIFFICULTIES[selectedDifficulty].elo }
+      ))
 
       const overMsg = checkGameOver(g)
       if (overMsg) {
@@ -198,6 +338,8 @@ export default function App() {
         clock.stop()
         stopEval()
         triggerAnalysis(newFenHistory, newMoveHistory, playerColor)
+      } else {
+        tryPremove(g)
       }
     } catch {
       // computer had no move
@@ -217,19 +359,38 @@ export default function App() {
     // If playing vs computer and player chose black, computer (white) goes first
     if (gameMode === 'computer' && playerColor === 'black') {
       triggerComputerMove(new Chess().fen())
+    } else {
+      // Synchronously seed liveEvalRef so the first player move always has a non-null
+      // lastMoveEvalSnapshot. Stockfish will quickly replace this with its real eval.
+      const seed = { score: 0, mate: null, depth: 0 }
+      liveEvalRef.current = seed
+      setLiveEval(seed)
+      evalPosition(new Chess().fen())
     }
   }
 
   function onDrop({ sourceSquare, targetSquare }: { piece: unknown; sourceSquare: string; targetSquare: string | null }) {
-    if (gameState !== 'playing' || computerThinking) return false
-    // In computer mode, block moves for the computer's color
-    if (gameMode === 'computer' && (game.turn() === 'w') === (computerColor === 'white')) return false
-    // In speed-pair mode, block moves when it's the opponent's turn
-    if (gameMode === 'speed-pair' && ((game.turn() === 'w') !== (playerColor === 'white'))) return false
+    const currentGame = gameRef.current
+    const currentMode = gameModeRef.current
+    if (gameStateRef.current !== 'playing') return false
     if (!targetSquare) return false
 
+    const isOpponentTurn =
+      (currentMode === 'computer' && ((currentGame.turn() === 'w') === (computerColor === 'white'))) ||
+      (currentMode === 'speed-pair' && ((currentGame.turn() === 'w') !== (playerColor === 'white')))
+
+    // During opponent's turn — save as premove if it's the player's own piece
+    if (isOpponentTurn || computerThinkingRef.current) {
+      const piece = currentGame.get(sourceSquare as Parameters<typeof currentGame.get>[0])
+      if (!piece) return false
+      const isMyPiece = (piece.color === 'w') === (playerColor === 'white')
+      if (!isMyPiece) return false
+      setPremove({ from: sourceSquare, to: targetSquare })
+      return false
+    }
+
     try {
-      const gameCopy = new Chess(game.fen())
+      const gameCopy = new Chess(currentGame.fen())
       const move = gameCopy.move({ from: sourceSquare, to: targetSquare, promotion: 'q' })
       if (!move) return false
 
@@ -242,6 +403,9 @@ export default function App() {
       moveHistoryRef.current = newMoveHistory
       moveSquaresHistoryRef.current = newMoveSquaresHistory
 
+      setPremove(null)
+      setSelectedSquare(null)
+      setLegalMoveSquares(new Set())
       setGame(gameCopy)
       setMoveHistory(newMoveHistory)
       setFenHistory(newFenHistory)
@@ -251,17 +415,35 @@ export default function App() {
       if (clockEnabled) clock.onMove(movedColor)
 
       // Update live eval
+      setLastMoveEvalSnapshot(liveEvalRef.current ? { score: liveEvalRef.current.score, mate: liveEvalRef.current.mate } : null)
+      setLastMovedColor(movedColor)
       evalPosition(gameCopy.fen())
 
       // In Speed Pair, send the move to Firebase
       if (gameMode === 'speed-pair') speedPair.sendMove(move.san)
+
+      const _playerMoveTimeMs = lastMoveTimestampRef.current ? Date.now() - lastMoveTimestampRef.current : 0
+      lastMoveTimestampRef.current = Date.now()
+      const _playerClockMs = clockEnabled ? (playerColor === 'white' ? clock.timeWhite : clock.timeBlack) : 0
+      clientLog('info', 'client move played', {
+        san: move.san, fen: gameCopy.fen(), moveNumber: newMoveHistory.length,
+        source: 'player', gameMode,
+        moveTimeMs: _playerMoveTimeMs, clockRemainingMs: _playerClockMs,
+        ...(gameMode === 'speed-pair' && speedPair.match ? { gameId: speedPair.match.gameId } : {}),
+        ...(liveEvalRef.current ? { evalCp: liveEvalRef.current.score, evalDepth: liveEvalRef.current.depth, ...(liveEvalRef.current.mate !== null ? { evalMate: liveEvalRef.current.mate } : {}) } : {}),
+      })
+      clientMetric(buildMoveMetrics(
+        'player', gameMode, newMoveHistory.length, _playerMoveTimeMs, _playerClockMs,
+        liveEvalRef.current?.score ?? null, liveEvalRef.current?.depth ?? null,
+        gameMode === 'speed-pair' && speedPair.match ? { gameId: speedPair.match.gameId } : {}
+      ))
 
       const overMsg = checkGameOver(gameCopy)
       if (overMsg) {
         setGameOverMsg(overMsg)
         clock.stop()
         stopEval()
-        triggerAnalysis(newFenHistory, newMoveHistory, gameMode === 'computer' ? playerColor : 'white')
+        triggerAnalysis(newFenHistory, newMoveHistory, playerColor)
       } else if (gameMode === 'computer') {
         triggerComputerMove(gameCopy.fen())
       }
@@ -269,6 +451,73 @@ export default function App() {
       return true
     } catch {
       return false
+    }
+  }
+
+  function onSquareClick({ square }: { piece: unknown; square: string }) {
+    if (gameStateRef.current !== 'playing') return
+
+    const currentGame = gameRef.current
+    const currentMode = gameModeRef.current
+
+    const isOpponentTurn =
+      (currentMode === 'computer' && (currentGame.turn() === 'w') === (computerColor === 'white')) ||
+      (currentMode === 'speed-pair' && (currentGame.turn() === 'w') !== (playerColor === 'white'))
+
+    // During opponent's turn: handle premove clicks
+    if (isOpponentTurn || computerThinkingRef.current) {
+      const piece = currentGame.get(square as Parameters<typeof currentGame.get>[0])
+      const isMyPiece = piece && (piece.color === 'w') === (playerColor === 'white')
+      if (selectedSquare && !isMyPiece) {
+        // Second click: save premove
+        setPremove({ from: selectedSquare, to: square })
+        setSelectedSquare(null)
+        setLegalMoveSquares(new Set())
+      } else if (isMyPiece) {
+        // First click or re-select: pick piece
+        setSelectedSquare(square)
+        setLegalMoveSquares(new Set())
+      } else {
+        setSelectedSquare(null)
+        setLegalMoveSquares(new Set())
+      }
+      return
+    }
+
+    const piece = currentGame.get(square as Parameters<typeof currentGame.get>[0])
+    const isMyPiece = piece && (piece.color === 'w') === (playerColor === 'white')
+
+    if (!selectedSquare) {
+      // First click: select own piece
+      if (!isMyPiece) return
+      const moves = currentGame.moves({ square: square as Parameters<typeof currentGame.moves>[0] extends { square?: infer S } ? S : never, verbose: true })
+      setSelectedSquare(square)
+      setLegalMoveSquares(new Set(moves.map((m: { to: string }) => m.to)))
+      return
+    }
+
+    // Second click
+    if (square === selectedSquare) {
+      // Deselect
+      setSelectedSquare(null)
+      setLegalMoveSquares(new Set())
+      return
+    }
+
+    if (isMyPiece) {
+      // Re-select different own piece
+      const moves = currentGame.moves({ square: square as Parameters<typeof currentGame.moves>[0] extends { square?: infer S } ? S : never, verbose: true })
+      setSelectedSquare(square)
+      setLegalMoveSquares(new Set(moves.map((m: { to: string }) => m.to)))
+      return
+    }
+
+    // Attempt move
+    const result = onDrop({ piece: null, sourceSquare: selectedSquare, targetSquare: square })
+    setSelectedSquare(null)
+    setLegalMoveSquares(new Set())
+    if (!result) {
+      // Illegal move — deselect
     }
   }
 
@@ -287,6 +536,10 @@ export default function App() {
 
   function handleNewGame() {
     speedPair.leavePool()
+    stopEval()
+    lastMoveTimestampRef.current = 0
+    setLastMoveEvalSnapshot(null)
+    setLastMovedColor(null)
     const newGame = new Chess()
     fenHistoryRef.current = [newGame.fen()]
     moveHistoryRef.current = []
@@ -300,9 +553,15 @@ export default function App() {
     setAnalysisProgress({ current: 0, total: 0 })
     clock.reset(tc.seconds)
     setLiveEval(null)
+    liveEvalRef.current = null
+    setLastMoveEvalSnapshot(null)
+    setLastMovedColor(null)
     setReviewMoveIndex(null)
     setAnalysisFens([])
     setMoveSquaresHistory([])
+    setPremove(null)
+    setSelectedSquare(null)
+    setLegalMoveSquares(new Set())
     setComputerThinking(false)
     setAnalysisPlayerColor('white')
   }
@@ -333,6 +592,17 @@ export default function App() {
     squareStyles[lastMoveSquares.to] = { backgroundColor: 'rgba(255, 255, 0, 0.5)' }
   }
 
+  if (selectedSquare) {
+    squareStyles[selectedSquare] = { backgroundColor: 'rgba(255, 255, 100, 0.6)' }
+  }
+  for (const sq of legalMoveSquares) {
+    squareStyles[sq] = { backgroundColor: 'rgba(255, 255, 100, 0.25)' }
+  }
+  if (premove) {
+    squareStyles[premove.from] = { backgroundColor: 'rgba(100, 150, 255, 0.5)' }
+    squareStyles[premove.to] = { backgroundColor: 'rgba(100, 150, 255, 0.65)' }
+  }
+
   if (reviewMoveIndex === null && game.inCheck()) {
     const kingSquare = game.board().flat().find(
       (p) => p && p.type === 'k' && p.color === game.turn()
@@ -357,11 +627,23 @@ export default function App() {
 
   const isPlaying = gameState === 'playing'
 
+  const liveClassification = (() => {
+    if (!lastMoveEvalSnapshot || !liveEval || !lastMovedColor) return null
+    const cpLoss = lastMovedColor === 'white'
+      ? Math.max(0, lastMoveEvalSnapshot.score - liveEval.score)
+      : Math.max(0, liveEval.score - lastMoveEvalSnapshot.score)
+    if (cpLoss <= 0)   return { label: 'Best',       color: 'text-green-400' }
+    if (cpLoss <= 20)  return { label: 'Good',       color: 'text-emerald-400' }
+    if (cpLoss <= 50)  return { label: 'Inaccuracy', color: 'text-yellow-400' }
+    if (cpLoss <= 150) return { label: 'Mistake',    color: 'text-orange-400' }
+    return               { label: 'Blunder',     color: 'text-red-500' }
+  })()
+
   return (
-    <div className="min-h-screen bg-gray-950 flex items-start justify-center p-6">
-      <div className="flex gap-6 w-full max-w-6xl">
+    <div className="min-h-screen bg-gray-950 flex items-start justify-center p-3 lg:p-6">
+      <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 w-full max-w-6xl">
         {/* Board column */}
-        <div className="flex flex-col gap-2 shrink-0" style={{ width: 660 }}>
+        <div className="flex flex-col gap-2 lg:shrink-0" style={{ width: boardSize <= 500 ? '100%' : 660 }}>
           <div className="flex items-center gap-2.5 mb-1">
             <span className="text-2xl leading-none">♟</span>
             <h1 className="text-xl font-bold text-white tracking-tight">Evaluchess</h1>
@@ -405,14 +687,15 @@ export default function App() {
 
           {/* Board + eval bar */}
           <div className="flex gap-2 items-stretch">
-            <EvalBar ev={liveEval} height={600} />
-            <div className="rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/5" style={{ width: 600, height: 600 }}>
+            <EvalBar ev={liveEval} height={boardSize} />
+            <div className="rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/5" style={{ width: boardSize, height: boardSize }}>
               <Chessboard
                 key={reviewMoveIndex !== null ? `review-${reviewMoveIndex}` : 'game'}
                 options={{
                   position: displayFen,
                   boardOrientation: playerColor,
                   onPieceDrop: isPlaying ? onDrop : undefined,
+                  onSquareClick: isPlaying ? onSquareClick : undefined,
                   squareStyles,
                   arrows: reviewArrows,
                   boardStyle: { borderRadius: '4px' },
@@ -423,6 +706,15 @@ export default function App() {
               />
             </div>
           </div>
+
+          {/* Live move classification */}
+          {isPlaying && liveClassification && (
+            <div className="text-center py-1">
+              <span className={`text-3xl font-bold tracking-wide ${liveClassification.color}`}>
+                {liveClassification.label}
+              </span>
+            </div>
+          )}
 
           {/* Player clock (bottom) */}
           {(() => {
@@ -470,7 +762,7 @@ export default function App() {
         </div>
 
         {/* Side panel */}
-        <div className="flex-1 min-w-64 flex flex-col gap-4">
+        <div className="w-full lg:flex-1 lg:min-w-64 flex flex-col gap-4">
           {/* Configurator — idle only */}
           {gameState === 'idle' && (
             <div className="bg-gray-800/80 rounded-xl p-4 border border-gray-700/50 flex flex-col gap-4">
@@ -626,13 +918,11 @@ export default function App() {
                 onClick={async () => {
                   if (gameMode === 'speed-pair') {
                     await speedPair.resignGame()
-                    setGameOverMsg('You resigned.')
-                    clock.stop()
-                    stopEval()
-                    triggerAnalysis(fenHistoryRef.current, moveHistoryRef.current, speedPair.match?.myColor ?? 'white')
-                  } else {
-                    handleNewGame()
                   }
+                  setGameOverMsg('You resigned.')
+                  clock.stop()
+                  stopEval()
+                  triggerAnalysis(fenHistoryRef.current, moveHistoryRef.current, gameMode === 'speed-pair' ? (speedPair.match?.myColor ?? 'white') : playerColor)
                 }}
                 className="w-full py-2 bg-gray-700/80 hover:bg-gray-700 border border-gray-600/50 text-gray-300 hover:text-white text-sm font-medium rounded-lg transition-colors"
               >

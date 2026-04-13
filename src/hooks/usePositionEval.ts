@@ -10,6 +10,10 @@ export function usePositionEval(onEval: (ev: LiveEval) => void) {
   const workerRef = useRef<Worker | null>(null)
   const readyRef = useRef(false)
   const pendingRef = useRef(false)
+  // Counts how many "stop" commands are in-flight waiting for their bestmove ACK.
+  // info messages are ignored while this is > 0 to prevent stale results from
+  // a previous search bleeding into the current one.
+  const ignoreCountRef = useRef(0)
   const activeSideRef = useRef<'w' | 'b'>('w')
   const onEvalRef = useRef(onEval)
   onEvalRef.current = onEval
@@ -27,7 +31,21 @@ export function usePositionEval(onEval: (ev: LiveEval) => void) {
         return
       }
 
+      if (line.startsWith('bestmove')) {
+        if (ignoreCountRef.current > 0) {
+          // This bestmove acknowledges a stop we issued. Decrement the counter
+          // but keep pendingRef = true since a new search is already running.
+          ignoreCountRef.current -= 1
+        } else {
+          pendingRef.current = false
+        }
+        return
+      }
+
       if (line.startsWith('info') && line.includes('score') && line.includes('depth')) {
+        // Ignore info from a search we've already stopped
+        if (ignoreCountRef.current > 0) return
+
         const depthMatch = line.match(/depth (\d+)/)
         const cpMatch = line.match(/score cp (-?\d+)/)
         const mateMatch = line.match(/score mate (-?\d+)/)
@@ -48,10 +66,6 @@ export function usePositionEval(onEval: (ev: LiveEval) => void) {
         const flip = activeSideRef.current === 'b' ? -1 : 1
         onEvalRef.current({ score: score * flip, mate: mate !== null ? mate * flip : null, depth })
       }
-
-      if (line.startsWith('bestmove')) {
-        pendingRef.current = false
-      }
     })
 
     worker.postMessage('uci')
@@ -70,7 +84,9 @@ export function usePositionEval(onEval: (ev: LiveEval) => void) {
     activeSideRef.current = activeColor as 'w' | 'b'
 
     if (pendingRef.current) {
+      // Stop the running search; its bestmove ACK will decrement ignoreCountRef
       worker.postMessage('stop')
+      ignoreCountRef.current += 1
     }
     pendingRef.current = true
     worker.postMessage('ucinewgame')
@@ -81,6 +97,7 @@ export function usePositionEval(onEval: (ev: LiveEval) => void) {
   const stop = useCallback(() => {
     if (workerRef.current && pendingRef.current) {
       workerRef.current.postMessage('stop')
+      ignoreCountRef.current += 1
       pendingRef.current = false
     }
   }, [])

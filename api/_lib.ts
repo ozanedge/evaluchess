@@ -7,20 +7,34 @@ export const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 })
 
-const ratelimit = new Ratelimit({
+const moveRatelimit = new Ratelimit({
   redis,
-  limiter: Ratelimit.slidingWindow(30, '10 s'),
-  prefix: 'evaluchess:rl',
+  limiter: Ratelimit.slidingWindow(150, '10 s'),
+  prefix: 'evaluchess:rl:move',
 })
 
-export async function checkRateLimit(req: VercelRequest, res: VercelResponse): Promise<boolean> {
+const strictRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '10 s'),
+  prefix: 'evaluchess:rl:strict',
+})
+
+async function applyRateLimit(req: VercelRequest, res: VercelResponse, limiter: Ratelimit): Promise<boolean> {
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || 'unknown'
-  const { success } = await ratelimit.limit(ip)
+  const { success } = await limiter.limit(ip)
   if (!success) {
     res.status(429).json({ error: 'Too many requests' })
     return false
   }
   return true
+}
+
+export function checkRateLimit(req: VercelRequest, res: VercelResponse): Promise<boolean> {
+  return applyRateLimit(req, res, moveRatelimit)
+}
+
+export function checkStrictRateLimit(req: VercelRequest, res: VercelResponse): Promise<boolean> {
+  return applyRateLimit(req, res, strictRatelimit)
 }
 
 export function generateToken(): string {

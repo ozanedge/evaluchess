@@ -24,7 +24,7 @@ export function useOnlineCount(): number {
     }
 
     heartbeat()
-    const interval = setInterval(heartbeat, 10_000)
+    const interval = setInterval(heartbeat, 60_000)
     return () => clearInterval(interval)
   }, [])
 
