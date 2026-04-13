@@ -106,6 +106,7 @@ export async function flush(): Promise<void> {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${ED_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(1500),
     })
     if (!res.ok) console.error(`[otel] trace export failed: ${res.status} ${await res.text()}`)
   } catch (err) {
@@ -138,6 +139,7 @@ export async function flushLogs(): Promise<void> {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${ED_TOKEN}`, 'Content-Type': 'application/x-ndjson' },
       body,
+      signal: AbortSignal.timeout(1500),
     })
     if (!res.ok) console.error(`[otel] log export failed: ${res.status} ${await res.text()}`)
   } catch (err) {
@@ -194,6 +196,7 @@ export async function flushMetrics(): Promise<void> {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${ED_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(1500),
     })
     if (!res.ok) console.error(`[otel] metrics export failed: ${res.status} ${await res.text()}`)
   } catch (err) {
