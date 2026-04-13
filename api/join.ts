@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { Chess } from 'chess.js'
-import { redis, checkStrictRateLimit, generateToken } from './_lib.js'
+import { redis, checkRateLimit, generateToken } from './_lib.js'
 import { tracer, flush, recordError, log, metric } from './_otel.js'
 
 const QUEUE_KEY = 'evaluchess:queue'
@@ -16,7 +16,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     if (req.method !== 'POST') { statusCode = 405; return }
-    if (!await checkStrictRateLimit(req, res)) { span.setAttribute('rate_limited', true); statusCode = 429; return }
+    if (!await checkRateLimit(req, res)) { span.setAttribute('rate_limited', true); statusCode = 429; return }
 
     const { id, tc, leave } = req.body as { id: string; tc: string; leave?: boolean }
     if (!id) { statusCode = 400; body = { error: 'missing id' }; return }
