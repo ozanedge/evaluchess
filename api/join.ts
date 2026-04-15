@@ -11,25 +11,23 @@ interface MatchData { gameId: string; myColor: 'white' | 'black'; opponentId: st
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const span = tracer.startSpan('join')
-  let statusCode = 200
-  let body: unknown = null
 
   try {
-    if (req.method !== 'POST') { statusCode = 405; return }
-    if (!await checkRateLimit(req, res)) { span.setAttribute('rate_limited', true); statusCode = 429; return }
+    if (req.method !== 'POST') { return res.status(405).end() }
+    if (!await checkRateLimit(req, res)) { span.setAttribute('rate_limited', true); return }
 
     const { id, tc, leave } = req.body as { id: string; tc: string; leave?: boolean }
-    if (!id) { statusCode = 400; body = { error: 'missing id' }; return }
+    if (!id) { return res.status(400).json({ error: 'missing id' }) }
 
     span.setAttributes({ 'player.id': id, 'tc': tc ?? '', 'leave': !!leave })
 
     if (leave) {
       await Promise.all([redis.del(`evaluchess:match:${id}`), redis.hdel(QUEUE_KEY, id)])
       log('info', 'player left pool', { playerId: id, tc })
-      body = { ok: true }; return
+      return res.json({ ok: true })
     }
 
-    if (!tc) { statusCode = 400; body = { error: 'missing tc' }; return }
+    if (!tc) { return res.status(400).json({ error: 'missing tc' }) }
 
     const now = Date.now()
 
@@ -37,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (existingMatch) {
       log('info', 'returning existing match', { playerId: id, gameId: existingMatch.gameId, color: existingMatch.myColor, opponentId: existingMatch.opponentId })
       span.setAttributes({ 'matched': true, 'match.existing': true })
-      body = { matched: true, ...existingMatch }; return
+      return res.json({ matched: true, ...existingMatch })
     }
 
     const queue = (await redis.hgetall(QUEUE_KEY) as Record<string, QueueEntry> | null) ?? {}
@@ -78,23 +76,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       metric('chess.match_wait_ms', waitMs, { tc })
       log('info', 'players matched', { gameId, playerId: id, opponentId, color: myColor, tc, waitMs })
       span.setAttributes({ 'matched': true, 'game.id': gameId, 'player.color': myColor })
-      body = { matched: true, ...myMatch }; return
+      return res.json({ matched: true, ...myMatch })
     }
 
     log('info', 'player joined pool', { playerId: id, tc, queueSize: totalQueueSize, tcQueueSize })
     await redis.hset(QUEUE_KEY, { [id]: { ts: now, tc } })
     span.setAttribute('matched', false)
-    body = { matched: false }
+    return res.json({ matched: false })
   } catch (err) {
     recordError(span, err)
     log('error', 'join handler error', { error: String(err) })
-    statusCode = 500; body = { error: 'internal error' }
+    return res.status(500).json({ error: 'internal error' })
   } finally {
     span.end()
     flush()
   }
-
-  if (statusCode === 405) return res.status(405).end()
-  if (statusCode === 429) return
-  return res.status(statusCode).json(body)
 }

@@ -12,24 +12,22 @@ async function validateToken(playerId: string, gameId: string, token: string): P
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const span = tracer.startSpan('move')
-  let statusCode = 200
-  let body: unknown = null
 
   try {
-    if (!await checkRateLimit(req, res)) { span.setAttribute('rate_limited', true); statusCode = 429; return }
+    if (!await checkRateLimit(req, res)) { span.setAttribute('rate_limited', true); return }
 
     if (req.method === 'POST') {
       const { gameId, san, resign, playerId, token } = req.body as {
         gameId: string; san?: string; resign?: boolean; playerId: string; token: string
       }
-      if (!gameId || !playerId || !token) { statusCode = 400; body = { error: 'missing fields' }; return }
+      if (!gameId || !playerId || !token) { return res.status(400).json({ error: 'missing fields' }) }
 
       span.setAttributes({ 'game.id': gameId, 'player.id': playerId, 'move.resign': !!resign })
 
       if (!await validateToken(playerId, gameId, token)) {
         log('warn', 'unauthorized move attempt', { gameId, playerId, san: san ?? null, resign: !!resign })
         span.setAttribute('auth.failed', true)
-        statusCode = 403; body = { error: 'unauthorized' }; return
+        return res.status(403).json({ error: 'unauthorized' })
       }
 
       if (resign) {
@@ -37,17 +35,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         metric('chess.resignations', 1, { gameId })
         log('info', 'player resigned', { gameId, playerId })
         span.setAttribute('move.type', 'resign')
-        body = { ok: true }; return
+        return res.json({ ok: true })
       }
 
-      if (!san) { statusCode = 400; body = { error: 'missing san' }; return }
+      if (!san) { return res.status(400).json({ error: 'missing san' }) }
 
       span.setAttribute('move.san', san)
 
       const fen = await redis.get(`evaluchess:fen:${gameId}`) as string | null
       if (!fen) {
         log('warn', 'game not found', { gameId, playerId, san })
-        statusCode = 410; body = { error: 'game not found' }; return
+        return res.status(410).json({ error: 'game not found' })
       }
 
       const chess = new Chess(fen)
@@ -57,7 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         metric('chess.illegal_moves', 1, { gameId })
         log('warn', 'illegal move attempted', { gameId, playerId, san, fen })
         span.setAttribute('move.illegal', true)
-        statusCode = 400; body = { error: 'illegal move' }; return
+        return res.status(400).json({ error: 'illegal move' })
       }
 
       const newFen = chess.fen()
@@ -73,12 +71,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       log('info', 'move played', { gameId, playerId, san, fen: newFen, inCheck: isCheck, isCheckmate, isDraw })
       span.setAttributes({ 'move.type': 'move', 'game.check': isCheck, 'game.checkmate': isCheckmate, 'game.draw': isDraw })
-      body = { ok: true }; return
+      return res.json({ ok: true })
     }
 
     if (req.method === 'GET') {
       const { gameId, since } = req.query as { gameId: string; since?: string }
-      if (!gameId) { statusCode = 400; body = { error: 'missing gameId' }; return }
+      if (!gameId) { return res.status(400).json({ error: 'missing gameId' }) }
 
       span.setAttributes({ 'game.id': gameId, 'move.since': since ?? '0' })
 
@@ -90,20 +88,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       log('info', 'move poll', { gameId, since: sinceIdx, moveCount: moves.length, resigned: !!resigned })
       span.setAttributes({ 'move.count': moves.length, 'game.resigned': !!resigned })
-      body = { moves, resigned: !!resigned }; return
+      return res.json({ moves, resigned: !!resigned })
     }
 
-    statusCode = 405
+    return res.status(405).end()
   } catch (err) {
     recordError(span, err)
     log('error', 'move handler error', { error: String(err) })
-    statusCode = 500; body = { error: 'internal error' }
+    return res.status(500).json({ error: 'internal error' })
   } finally {
     span.end()
     flush()
   }
-
-  if (statusCode === 405) return res.status(405).end()
-  if (statusCode === 429) return
-  return res.status(statusCode).json(body)
 }

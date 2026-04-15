@@ -7,11 +7,9 @@ const STALE_MS = 90_000
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const span = tracer.startSpan('online')
-  let statusCode = 200
-  let body: unknown = null
 
   try {
-    if (!await checkStrictRateLimit(req, res)) { span.setAttribute('rate_limited', true); statusCode = 429; return }
+    if (!await checkStrictRateLimit(req, res)) { span.setAttribute('rate_limited', true); return }
 
     const id = req.method === 'POST'
       ? (req.body as { id?: string })?.id
@@ -21,7 +19,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (id) { await redis.hset(PRESENCE_KEY, { [id]: String(now) }); span.setAttribute('player.id', id) }
 
     const raw = await redis.hgetall(PRESENCE_KEY) as Record<string, string> | null
-    if (!raw) { span.setAttribute('online.count', 0); body = { count: 0 }; return }
+    if (!raw) { span.setAttribute('online.count', 0); return res.json({ count: 0 }) }
 
     let count = 0
     const stale: string[] = []
@@ -37,16 +35,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     log('info', 'presence heartbeat', { onlineCount: count, staleRemoved: stale.length, method: req.method, ...(id ? { playerId: id } : {}) })
     metric('chess.online_players', count)
     span.setAttribute('online.count', count)
-    body = { count }
+    return res.json({ count })
   } catch (err) {
     recordError(span, err)
     log('error', 'online handler error', { error: String(err) })
-    statusCode = 500; body = { error: 'internal error' }
+    return res.status(500).json({ error: 'internal error' })
   } finally {
     span.end()
     flush()
   }
-
-  if (statusCode === 429) return
-  return res.status(statusCode).json(body)
 }
