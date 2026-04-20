@@ -1,4 +1,5 @@
 import { ChessComputer } from './chesscomputer.js'
+import { reportOnline } from './api.js'
 import { db } from './firebase.js'
 import {
   CHESSCOMPUTER_PROFILES,
@@ -8,6 +9,9 @@ import {
   encodeUsernameKey,
   randInt,
 } from './config.js'
+
+// Server treats presence entries older than 90s as stale, so refresh well under that.
+const PRESENCE_INTERVAL_MS = 50_000
 
 async function loadChessComputers(): Promise<ChessComputer[]> {
   const cpus: ChessComputer[] = []
@@ -70,6 +74,25 @@ function scheduleDailyReset(cpus: ChessComputer[]): void {
   setTimeout(run, msUntilNextMidnightUtc())
 }
 
+/**
+ * Publish each chesscomputer's presence every PRESENCE_INTERVAL_MS so they show
+ * up in the site's "X online" pill the same way logged-in humans do.
+ */
+function startPresenceLoop(cpus: ChessComputer[]): void {
+  const ping = async () => {
+    // Sequential so 10 simultaneous requests don't hit the strict per-IP rate limit.
+    for (const cc of cpus) {
+      try {
+        await reportOnline(cc.playerId)
+      } catch (err) {
+        console.warn(`[${cc.username}] presence ping failed: ${(err as Error).message}`)
+      }
+    }
+  }
+  ping()
+  setInterval(ping, PRESENCE_INTERVAL_MS)
+}
+
 async function main(): Promise<void> {
   console.log(`Evaluchess chesscomputer worker starting (${new Date().toISOString()})`)
   const cpus = await loadChessComputers()
@@ -87,6 +110,7 @@ async function main(): Promise<void> {
   await Promise.all(cpus.map((c) => c.init()))
 
   scheduleDailyReset(cpus)
+  startPresenceLoop(cpus)
 
   let shuttingDown = false
   const shutdown = () => {
