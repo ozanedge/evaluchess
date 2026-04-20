@@ -5,6 +5,9 @@ import { tracer, flush, recordError, log, metric } from './_otel.js'
 
 interface MatchData { gameId: string; myColor: 'white' | 'black'; opponentId: string; token: string }
 
+const DISCONNECT_GRACE_MS = 5000
+const HEARTBEAT_TTL_SECONDS = 15
+
 async function validateToken(playerId: string, gameId: string, token: string): Promise<boolean> {
   const match = await redis.get(`evaluchess:match:${playerId}`) as MatchData | null
   return !!match && match.gameId === gameId && match.token === token
@@ -17,8 +20,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!await checkRateLimit(req, res)) { span.setAttribute('rate_limited', true); return }
 
     if (req.method === 'POST') {
-      const { gameId, san, resign, playerId, token } = req.body as {
-        gameId: string; san?: string; resign?: boolean; playerId: string; token: string
+      const { gameId, san, resign, playerId, token, remainingMs } = req.body as {
+        gameId: string; san?: string; resign?: boolean; playerId: string; token: string;
+        remainingMs?: number
       }
       if (!gameId || !playerId || !token) { return res.status(400).json({ error: 'missing fields' }) }
 
@@ -63,9 +67,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const isDraw = chess.isDraw()
       const isCheck = chess.inCheck()
 
+      // Store the mover's authoritative clock reading alongside the SAN so the
+      // poller can keep both clients' clocks in sync. Upstash auto-serializes
+      // the object to JSON; lrange auto-deserializes it back to an object.
+      const cleanMs = typeof remainingMs === 'number' && remainingMs >= 0 && Number.isFinite(remainingMs)
+        ? Math.round(remainingMs)
+        : null
       await Promise.all([
         redis.set(`evaluchess:fen:${gameId}`, newFen, { ex: 3600 }),
-        redis.rpush(`evaluchess:moves:${gameId}`, san),
+        redis.rpush(`evaluchess:moves:${gameId}`, { san, ms: cleanMs }),
         redis.expire(`evaluchess:moves:${gameId}`, 3600),
       ])
 
@@ -75,16 +85,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'GET') {
-      const { gameId, since } = req.query as { gameId: string; since?: string }
+      const { gameId, since, playerId } = req.query as { gameId: string; since?: string; playerId?: string }
       if (!gameId) { return res.status(400).json({ error: 'missing gameId' }) }
 
       span.setAttributes({ 'game.id': gameId, 'move.since': since ?? '0' })
 
       const sinceIdx = since ? parseInt(since) : 0
-      const [moves, resigned] = await Promise.all([
-        redis.lrange(`evaluchess:moves:${gameId}`, sinceIdx, -1) as Promise<string[]>,
-        redis.get(`evaluchess:resigned:${gameId}`),
-      ])
+      const now = Date.now()
+
+      // Refresh this poller's heartbeat so the opponent's next poll sees them as alive.
+      if (playerId) {
+        await redis.set(`evaluchess:hb:${gameId}:${playerId}`, now.toString(), { ex: HEARTBEAT_TTL_SECONDS })
+      }
+
+      let resigned = await redis.get(`evaluchess:resigned:${gameId}`)
+
+      // Disconnect detection: if the opponent's heartbeat is missing or older than
+      // DISCONNECT_GRACE_MS, auto-resign them. The polling player effectively wins.
+      if (!resigned && playerId) {
+        const myMatch = await redis.get(`evaluchess:match:${playerId}`) as MatchData | null
+        if (myMatch?.opponentId) {
+          const oppHbRaw = await redis.get(`evaluchess:hb:${gameId}:${myMatch.opponentId}`) as string | null
+          const lastHb = oppHbRaw ? parseInt(oppHbRaw) : 0
+          const stale = !oppHbRaw || (now - lastHb) > DISCONNECT_GRACE_MS
+          if (stale) {
+            await redis.set(`evaluchess:resigned:${gameId}`, '1', { ex: 3600 })
+            resigned = '1'
+            metric('chess.auto_resignations', 1, { gameId })
+            log('info', 'opponent auto-resigned (disconnect)', {
+              gameId,
+              disconnectedPlayer: myMatch.opponentId,
+              lastHeartbeatMsAgo: oppHbRaw ? now - lastHb : null,
+            })
+          }
+        }
+      }
+
+      const raw = await redis.lrange(`evaluchess:moves:${gameId}`, sinceIdx, -1) as unknown[]
+      // Upstash auto-deserializes: objects come back as objects, strings as strings.
+      // Handle both for robustness (and to cover any legacy plain-SAN entries).
+      const moves = raw.map((entry) => {
+        if (entry && typeof entry === 'object' && 'san' in (entry as Record<string, unknown>)) {
+          const o = entry as { san: string; ms?: number | null }
+          return { san: o.san, ms: typeof o.ms === 'number' ? o.ms : null }
+        }
+        if (typeof entry === 'string' && entry.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(entry) as { san: string; ms: number | null }
+            return { san: parsed.san, ms: parsed.ms ?? null }
+          } catch { /* fall through */ }
+        }
+        return { san: String(entry), ms: null }
+      })
 
       log('info', 'move poll', { gameId, since: sinceIdx, moveCount: moves.length, resigned: !!resigned })
       span.setAttributes({ 'move.count': moves.length, 'game.resigned': !!resigned })

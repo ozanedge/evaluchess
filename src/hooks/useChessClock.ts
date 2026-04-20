@@ -54,18 +54,27 @@ export function useChessClock(initialSeconds: number, incrementSeconds: number) 
     return clearTick
   }, [activeColor, flagged, clearTick])
 
-  // Called when the active player makes a move — adds increment and switches clock
-  const onMove = useCallback((colorWhoMoved: 'white' | 'black') => {
-    clearTick()
+  // Called when the active player makes a move — adds increment and switches clock.
+  // When `remainingMs` is provided (authoritative time reported by the mover), the
+  // mover's clock is reset to that value before the increment is applied.
+  //
+  // Do NOT clear the tick interval here: when two onMove calls happen in the same
+  // sync block (opponent move + premove), the batched activeColor can end up equal
+  // to its previous value, in which case the tick effect doesn't re-run and a
+  // manual clearTick would leave the clock permanently frozen. Let the effect's
+  // own cleanup/setup drive the interval lifecycle instead.
+  const onMove = useCallback((colorWhoMoved: 'white' | 'black', remainingMs?: number) => {
     const inc = incrementSeconds * 1000
     if (colorWhoMoved === 'white') {
-      setTimeWhite((prev) => prev + inc)
+      if (remainingMs !== undefined) setTimeWhite(Math.max(0, remainingMs) + inc)
+      else setTimeWhite((prev) => prev + inc)
       setActiveColor('black')
     } else {
-      setTimeBlack((prev) => prev + inc)
+      if (remainingMs !== undefined) setTimeBlack(Math.max(0, remainingMs) + inc)
+      else setTimeBlack((prev) => prev + inc)
       setActiveColor('white')
     }
-  }, [incrementSeconds, clearTick])
+  }, [incrementSeconds])
 
   // Start white's clock (call at game start)
   const start = useCallback(() => {

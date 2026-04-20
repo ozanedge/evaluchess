@@ -39,16 +39,19 @@ export default function EvalBar({ ev, height }: EvalBarProps) {
 
   return (
     <div
-      className="flex flex-col rounded-lg overflow-hidden w-8 shrink-0 relative select-none"
+      className="flex flex-col rounded-xl overflow-hidden w-8 shrink-0 relative select-none ring-1 ring-white/10 shadow-[0_20px_40px_-20px_rgba(0,0,0,0.6)]"
       style={{ height }}
     >
       {/* Black portion (top) */}
       <div
-        className="bg-gray-800 transition-all duration-300 flex items-start justify-center pt-1"
-        style={{ height: `${blackPct}%` }}
+        className="transition-all duration-500 ease-out flex items-start justify-center pt-1.5"
+        style={{
+          height: `${blackPct}%`,
+          background: 'linear-gradient(180deg, #1a1a24 0%, #0e0e16 100%)',
+        }}
       >
         {labelOnBlack && (
-          <span className="text-gray-100 text-xs font-bold font-mono leading-none">
+          <span className="text-gray-100 text-[11px] font-bold font-mono leading-none tracking-tight">
             {label}
           </span>
         )}
@@ -56,11 +59,14 @@ export default function EvalBar({ ev, height }: EvalBarProps) {
 
       {/* White portion (bottom) */}
       <div
-        className="bg-gray-100 transition-all duration-300 flex items-end justify-center pb-1"
-        style={{ height: `${whitePct}%` }}
+        className="transition-all duration-500 ease-out flex items-end justify-center pb-1.5"
+        style={{
+          height: `${whitePct}%`,
+          background: 'linear-gradient(180deg, #f5f5f0 0%, #e8e8e0 100%)',
+        }}
       >
         {!labelOnBlack && ev && (
-          <span className={`text-xs font-bold font-mono leading-none ${evalColor(ev)}`}>
+          <span className={`text-[11px] font-bold font-mono leading-none tracking-tight ${evalColor(ev)}`}>
             {label}
           </span>
         )}

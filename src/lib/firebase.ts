@@ -2,9 +2,12 @@ import { initializeApp } from 'firebase/app'
 import type { FirebaseApp } from 'firebase/app'
 import { getDatabase } from 'firebase/database'
 import type { Database } from 'firebase/database'
+import { getAuth } from 'firebase/auth'
+import type { Auth } from 'firebase/auth'
 
 let _app: FirebaseApp | null = null
 let _db: Database | null = null
+let _auth: Auth | null = null
 
 const {
   VITE_FIREBASE_API_KEY,
@@ -27,7 +30,10 @@ if (VITE_FIREBASE_API_KEY && VITE_FIREBASE_DATABASE_URL && VITE_FIREBASE_PROJECT
     appId: VITE_FIREBASE_APP_ID,
   })
   _db = getDatabase(_app)
+  _auth = getAuth(_app)
 }
 
 export const db = _db
+export const auth = _auth
 export const isFirebaseConfigured = !!_db
+export const isAuthConfigured = !!_auth

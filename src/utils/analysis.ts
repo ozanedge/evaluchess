@@ -8,6 +8,7 @@ export interface MoveAnalysis {
   player: 'white' | 'black'
   classification: MoveClassification
   cpLoss: number
+  accuracy: number // 0–100 per-move accuracy
   evalBefore: PositionEval
   evalAfter: PositionEval
   bestMove: string | null // UCI format of the best move at this position
@@ -79,12 +80,17 @@ export function buildAnalysis(
       ? Math.max(0, whiteBefore - whiteAfter)
       : Math.max(0, whiteAfter - whiteBefore)
 
+    const wp1 = player === 'white' ? cpToWinProb(whiteBefore) : 1 - cpToWinProb(whiteBefore)
+    const wp2 = player === 'white' ? cpToWinProb(whiteAfter) : 1 - cpToWinProb(whiteAfter)
+    const accuracy = winProbToAccuracy(wp1, wp2)
+
     moveAnalyses.push({
       moveNumber: Math.floor(i / 2) + 1,
       move: moves[i],
       player,
       classification: classifyMove(cpLoss),
       cpLoss,
+      accuracy,
       evalBefore,
       evalAfter,
       bestMove: evalBefore.bestMove ?? null,
