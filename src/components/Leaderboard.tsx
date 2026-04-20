@@ -54,8 +54,17 @@ export default function Leaderboard() {
     i === 2 ? 'text-orange-300' :
     'text-gray-500'
 
+  // Podium rows get custom gradients + matching hover state. Everyone else
+  // gets a subtle neutral row that still lifts on hover.
+  const rowStyle = (i: number) => {
+    if (i === 0) return 'bg-gradient-to-br from-amber-500/25 via-yellow-300/10 to-amber-600/25 ring-amber-300/40 shadow-[inset_0_1px_0_rgba(253,224,71,0.35),0_0_24px_-4px_rgba(251,191,36,0.35)] hover:from-amber-500/35 hover:via-yellow-300/20 hover:to-amber-600/35 hover:ring-amber-300/60 hover:shadow-[inset_0_1px_0_rgba(253,224,71,0.5),0_0_32px_-4px_rgba(251,191,36,0.55)] hover:-translate-y-0.5'
+    if (i === 1) return 'bg-gradient-to-br from-slate-200/20 via-gray-100/10 to-slate-400/25 ring-slate-200/40 shadow-[inset_0_1px_0_rgba(226,232,240,0.4),0_0_20px_-4px_rgba(203,213,225,0.3)] hover:from-slate-200/30 hover:via-gray-100/20 hover:to-slate-400/35 hover:ring-slate-200/60 hover:shadow-[inset_0_1px_0_rgba(226,232,240,0.55),0_0_28px_-4px_rgba(203,213,225,0.5)] hover:-translate-y-0.5'
+    if (i === 2) return 'bg-gradient-to-br from-orange-500/25 via-amber-700/10 to-orange-700/25 ring-orange-400/40 shadow-[inset_0_1px_0_rgba(253,186,116,0.35),0_0_20px_-4px_rgba(251,146,60,0.3)] hover:from-orange-500/35 hover:via-amber-700/20 hover:to-orange-700/35 hover:ring-orange-400/60 hover:shadow-[inset_0_1px_0_rgba(253,186,116,0.5),0_0_28px_-4px_rgba(251,146,60,0.5)] hover:-translate-y-0.5'
+    return 'bg-white/[0.03] ring-white/5 hover:bg-white/[0.07] hover:ring-white/15 hover:-translate-y-0.5'
+  }
+
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 lg:flex-1 lg:min-h-0">
       <div className="flex items-baseline justify-between">
         <div className="text-gray-500 text-[11px] font-semibold uppercase tracking-[0.12em]">
           Top 10 by Wins <span className="text-gray-600">· Last 24h</span>
@@ -78,7 +87,7 @@ export default function Leaderboard() {
         <div className="text-xs text-gray-500 text-center py-6">No wins in the last 24 hours yet. Be the first.</div>
       )}
       {data && data.rows.length > 0 && (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 lg:flex-1 lg:min-h-0">
           <div className="grid grid-cols-[1.25rem_1fr_3rem_2.5rem_auto] items-center gap-3 px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-gray-600">
             <span className="text-center">#</span>
             <span>Player</span>
@@ -89,7 +98,7 @@ export default function Leaderboard() {
           {data.rows.map((row, i) => (
             <div
               key={row.uid}
-              className="grid grid-cols-[1.25rem_1fr_3rem_2.5rem_auto] items-center gap-3 px-3 py-2.5 rounded-xl bg-white/[0.03] ring-1 ring-white/5"
+              className={`grid grid-cols-[1.25rem_1fr_3rem_2.5rem_auto] items-center gap-3 px-3 py-2.5 rounded-xl ring-1 transition-all duration-200 ease-out cursor-default lg:flex-1 lg:min-h-0 ${rowStyle(i)}`}
             >
               <span className={`text-center text-sm font-bold tabular-nums ${medalColor(i)}`}>
                 {i + 1}

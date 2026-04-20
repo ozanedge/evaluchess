@@ -6,6 +6,10 @@ import { tracer, flush, recordError, log, metric } from './_otel.js'
 const QUEUE_KEY = 'evaluchess:queue'
 const STALE_MS = 60_000
 
+// Mirror the client's username rules: 3–24 chars, start/end alphanumeric,
+// middle chars from [a-zA-Z0-9._\-+~!]. Anything outside that is silently dropped.
+const USERNAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._\-+~!]{1,22}[a-zA-Z0-9]$/
+
 interface QueueEntry { ts: number; tc: string; username?: string; elo?: number; uid?: string }
 interface MatchData {
   gameId: string
@@ -15,6 +19,11 @@ interface MatchData {
   opponentUsername?: string
   opponentElo?: number
   opponentUid?: string
+  // "My" identity — cached on the match record so later handlers (move, resign,
+  // disconnect detection) can include the caller's username in their logs.
+  myUsername?: string
+  myElo?: number
+  myUid?: string
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -31,16 +40,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!id) { return res.status(400).json({ error: 'missing id' }) }
 
     // Sanitize identity fields — only trust basic shapes; anyone could post these.
-    const cleanUsername = typeof username === 'string' && /^[a-zA-Z0-9_]{3,16}$/.test(username)
-      ? username : undefined
+    const cleanUsername = typeof username === 'string' && USERNAME_RE.test(username) ? username : undefined
     const cleanElo = typeof elo === 'number' && elo >= 100 && elo <= 3500 ? Math.round(elo) : undefined
     const cleanUid = typeof uid === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(uid) ? uid : undefined
 
-    span.setAttributes({ 'player.id': id, 'tc': tc ?? '', 'leave': !!leave })
+    span.setAttributes({
+      'player.id': id,
+      'tc': tc ?? '',
+      'leave': !!leave,
+      ...(cleanUsername ? { 'player.username': cleanUsername } : {}),
+    })
 
     if (leave) {
       await Promise.all([redis.del(`evaluchess:match:${id}`), redis.hdel(QUEUE_KEY, id)])
-      log('info', 'player left pool', { playerId: id, tc })
+      log('info', 'player left pool', { playerId: id, username: cleanUsername ?? null, tc })
       return res.json({ ok: true })
     }
 
@@ -50,7 +63,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const existingMatch = await redis.get(`evaluchess:match:${id}`) as MatchData | null
     if (existingMatch) {
-      log('info', 'returning existing match', { playerId: id, gameId: existingMatch.gameId, color: existingMatch.myColor, opponentId: existingMatch.opponentId })
+      log('info', 'returning existing match', {
+        playerId: id,
+        username: cleanUsername ?? existingMatch.myUsername ?? null,
+        gameId: existingMatch.gameId,
+        color: existingMatch.myColor,
+        opponentId: existingMatch.opponentId,
+        opponentUsername: existingMatch.opponentUsername ?? null,
+      })
       span.setAttributes({ 'matched': true, 'match.existing': true })
       return res.json({ matched: true, ...existingMatch })
     }
@@ -99,12 +119,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         opponentUsername: oppEntry.username,
         opponentElo: oppEntry.elo,
         opponentUid: oppEntry.uid,
+        myUsername: cleanUsername,
+        myElo: cleanElo,
+        myUid: cleanUid,
       }
       const oppMatch: MatchData = {
         gameId, myColor: oppColor, opponentId: id, token: oppToken,
         opponentUsername: cleanUsername,
         opponentElo: cleanElo,
         opponentUid: cleanUid,
+        myUsername: oppEntry.username,
+        myElo: oppEntry.elo,
+        myUid: oppEntry.uid,
       }
       const hbNow = now.toString()
       await Promise.all([
@@ -119,12 +145,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ])
       const waitMs = now - opponents[0][1].ts
       metric('chess.match_wait_ms', waitMs, { tc })
-      log('info', 'players matched', { gameId, playerId: id, opponentId, color: myColor, tc, waitMs })
+      log('info', 'players matched', {
+        gameId,
+        playerId: id,
+        username: cleanUsername ?? null,
+        opponentId,
+        opponentUsername: oppEntry.username ?? null,
+        color: myColor,
+        tc,
+        waitMs,
+      })
       span.setAttributes({ 'matched': true, 'game.id': gameId, 'player.color': myColor })
       return res.json({ matched: true, ...myMatch })
     }
 
-    log('info', 'player joined pool', { playerId: id, tc, queueSize: totalQueueSize, tcQueueSize })
+    log('info', 'player joined pool', {
+      playerId: id,
+      username: cleanUsername ?? null,
+      tc,
+      queueSize: totalQueueSize,
+      tcQueueSize,
+    })
     const entry: QueueEntry = { ts: now, tc }
     if (cleanUsername) entry.username = cleanUsername
     if (cleanElo !== undefined) entry.elo = cleanElo

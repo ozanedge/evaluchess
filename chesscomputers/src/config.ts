@@ -8,16 +8,16 @@ export interface ChessComputerProfile {
 }
 
 export const CHESSCOMPUTER_PROFILES: ChessComputerProfile[] = [
-  { username: 'knight_rider',  avgGamesPerDay: 25 },
-  { username: 'pawn_storm',    avgGamesPerDay: 22 },
-  { username: 'fork_and_pin',  avgGamesPerDay: 19 },
-  { username: 'endgame_eddy',  avgGamesPerDay: 16 },
-  { username: 'blunderbuss',   avgGamesPerDay: 13 },
-  { username: 'queens_gambit', avgGamesPerDay: 11 },
-  { username: 'zugzwang_zoe',  avgGamesPerDay: 9 },
-  { username: 'passed_pawn',   avgGamesPerDay: 7 },
-  { username: 'petrov_pete',   avgGamesPerDay: 5 },
-  { username: 'castle_king',   avgGamesPerDay: 3 },
+  { username: 'KasparovClone', avgGamesPerDay: 25 },
+  { username: 'pawn.eater',    avgGamesPerDay: 22 },
+  { username: 'Bishop-Bash',   avgGamesPerDay: 19 },
+  { username: 'fianchetto',    avgGamesPerDay: 16 },
+  { username: 'Tal-hunter99',  avgGamesPerDay: 13 },
+  { username: 'ZugZwang',      avgGamesPerDay: 11 },
+  { username: 'en.passant',    avgGamesPerDay: 9 },
+  { username: 'Queen+Rook',    avgGamesPerDay: 7 },
+  { username: 'mattsquad',     avgGamesPerDay: 5 },
+  { username: '64Squares',     avgGamesPerDay: 3 },
 ]
 
 /** Usernames only — a convenience for setup/reset scripts. */

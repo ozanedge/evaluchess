@@ -62,7 +62,7 @@ export default function App() {
   const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0 })
   const [gameOverMsg, setGameOverMsg] = useState('')
   const [selectedTC, setSelectedTC] = useState(1) // default 5+0
-  const [clockEnabled, setClockEnabled] = useState(true)
+  const [clockEnabled] = useState(true)
   const [gameMode, setGameMode] = useState<'computer' | 'speed-pair'>('speed-pair')
   const [playerColor, setPlayerColor] = useState<'white' | 'black'>('white')
   const [selectedDifficulty, setSelectedDifficulty] = useState(1) // default Enthusiast
@@ -903,9 +903,11 @@ export default function App() {
         <div className={`w-full lg:flex-1 lg:min-w-64 flex flex-col gap-4 ${
           gameState === 'idle' || gameState === 'matching' ? 'order-first lg:order-none' : ''
         }`}>
-          {/* Configurator — idle only */}
+          {/* Configurator — idle only. Always stretch the panel to match the
+              board column's height on desktop. The Start Game button anchors to
+              the bottom via mt-auto so the form feels grounded. */}
           {gameState === 'idle' && (
-            <div className="glass rounded-2xl p-5 flex flex-col gap-5">
+            <div className="glass rounded-2xl p-5 flex flex-col gap-5 lg:flex-1">
               {/* Mode / view selector */}
               <div className="flex gap-1 bg-black/30 p-1 rounded-xl ring-1 ring-white/5">
                 {(['speed-pair', 'computer', 'leaderboard'] as const).map((view) => {
@@ -963,29 +965,19 @@ export default function App() {
                 </div>
               )}
 
-              {/* Time control */}
-              <div>
-                <div className="flex items-center justify-between mb-2.5">
+              {/* Time control — stacks vertically on desktop to fill empty panel space */}
+              <div className="flex flex-col lg:flex-1 lg:min-h-0">
+                <div className="mb-2.5">
                   <span className="text-gray-500 text-[11px] font-semibold uppercase tracking-[0.12em]">Time Control</span>
-                  <button
-                    onClick={() => setClockEnabled((e) => !e)}
-                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ring-1 ${
-                      clockEnabled
-                        ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/30'
-                        : 'bg-white/5 text-gray-400 ring-white/5'
-                    }`}
-                  >
-                    {clockEnabled ? 'Clock On' : 'Clock Off'}
-                  </button>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-2 lg:grid-cols-1 lg:flex-1 lg:min-h-0 lg:grid-rows-3">
                   {TIME_CONTROLS.map((tc, i) => (
                     <button
                       key={tc.label}
                       onClick={() => handleTCChange(i)}
-                      className={`py-2 text-sm font-mono font-semibold rounded-xl transition-all ring-1 ${
+                      className={`py-2 text-sm font-mono font-semibold rounded-xl transition-all ring-1 lg:h-full lg:text-5xl lg:font-bold lg:tracking-tight lg:rounded-2xl ${
                         selectedTC === i
-                          ? 'bg-gradient-to-br from-indigo-500/90 to-fuchsia-500/90 text-white ring-white/20 shadow-md shadow-indigo-900/30'
+                          ? 'bg-gradient-to-br from-indigo-500/90 to-fuchsia-500/90 text-white ring-white/20 shadow-md shadow-indigo-900/30 lg:shadow-lg lg:shadow-indigo-900/50 lg:ring-white/30'
                           : 'bg-white/5 text-gray-200 ring-white/5 hover:bg-white/10 hover:ring-white/10'
                       }`}
                     >

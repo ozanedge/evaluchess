@@ -3,14 +3,20 @@ import { Chess } from 'chess.js'
 import { redis, checkRateLimit } from './_lib.js'
 import { tracer, flush, recordError, log, metric } from './_otel.js'
 
-interface MatchData { gameId: string; myColor: 'white' | 'black'; opponentId: string; token: string }
+interface MatchData {
+  gameId: string
+  myColor: 'white' | 'black'
+  opponentId: string
+  token: string
+  myUsername?: string
+  opponentUsername?: string
+}
 
 const DISCONNECT_GRACE_MS = 5000
 const HEARTBEAT_TTL_SECONDS = 15
 
-async function validateToken(playerId: string, gameId: string, token: string): Promise<boolean> {
-  const match = await redis.get(`evaluchess:match:${playerId}`) as MatchData | null
-  return !!match && match.gameId === gameId && match.token === token
+async function fetchMatch(playerId: string): Promise<MatchData | null> {
+  return (await redis.get(`evaluchess:match:${playerId}`)) as MatchData | null
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -26,10 +32,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       if (!gameId || !playerId || !token) { return res.status(400).json({ error: 'missing fields' }) }
 
-      span.setAttributes({ 'game.id': gameId, 'player.id': playerId, 'move.resign': !!resign })
+      const match = await fetchMatch(playerId)
+      const username = match?.myUsername ?? null
+      const opponentUsername = match?.opponentUsername ?? null
 
-      if (!await validateToken(playerId, gameId, token)) {
-        log('warn', 'unauthorized move attempt', { gameId, playerId, san: san ?? null, resign: !!resign })
+      span.setAttributes({
+        'game.id': gameId,
+        'player.id': playerId,
+        'move.resign': !!resign,
+        ...(username ? { 'player.username': username } : {}),
+      })
+
+      if (!match || match.gameId !== gameId || match.token !== token) {
+        log('warn', 'unauthorized move attempt', { gameId, playerId, username, san: san ?? null, resign: !!resign })
         span.setAttribute('auth.failed', true)
         return res.status(403).json({ error: 'unauthorized' })
       }
@@ -37,7 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (resign) {
         await redis.set(`evaluchess:resigned:${gameId}`, '1', { ex: 3600 })
         metric('chess.resignations', 1, { gameId })
-        log('info', 'player resigned', { gameId, playerId })
+        log('info', 'player resigned', { gameId, playerId, username, opponentUsername })
         span.setAttribute('move.type', 'resign')
         return res.json({ ok: true })
       }
@@ -48,7 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const fen = await redis.get(`evaluchess:fen:${gameId}`) as string | null
       if (!fen) {
-        log('warn', 'game not found', { gameId, playerId, san })
+        log('warn', 'game not found', { gameId, playerId, username, san })
         return res.status(410).json({ error: 'game not found' })
       }
 
@@ -57,7 +72,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try { move = chess.move(san) } catch { move = null }
       if (!move) {
         metric('chess.illegal_moves', 1, { gameId })
-        log('warn', 'illegal move attempted', { gameId, playerId, san, fen })
+        log('warn', 'illegal move attempted', { gameId, playerId, username, san, fen })
         span.setAttribute('move.illegal', true)
         return res.status(400).json({ error: 'illegal move' })
       }
@@ -79,7 +94,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         redis.expire(`evaluchess:moves:${gameId}`, 3600),
       ])
 
-      log('info', 'move played', { gameId, playerId, san, fen: newFen, inCheck: isCheck, isCheckmate, isDraw })
+      log('info', 'move played', {
+        gameId, playerId, username, opponentUsername, san, fen: newFen,
+        inCheck: isCheck, isCheckmate, isDraw,
+      })
       span.setAttributes({ 'move.type': 'move', 'game.check': isCheck, 'game.checkmate': isCheckmate, 'game.draw': isDraw })
       return res.json({ ok: true })
     }
@@ -99,11 +117,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       let resigned = await redis.get(`evaluchess:resigned:${gameId}`)
+      let myMatch: MatchData | null = null
 
       // Disconnect detection: if the opponent's heartbeat is missing or older than
       // DISCONNECT_GRACE_MS, auto-resign them. The polling player effectively wins.
       if (!resigned && playerId) {
-        const myMatch = await redis.get(`evaluchess:match:${playerId}`) as MatchData | null
+        myMatch = await fetchMatch(playerId)
         if (myMatch?.opponentId) {
           const oppHbRaw = await redis.get(`evaluchess:hb:${gameId}:${myMatch.opponentId}`) as string | null
           const lastHb = oppHbRaw ? parseInt(oppHbRaw) : 0
@@ -114,7 +133,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             metric('chess.auto_resignations', 1, { gameId })
             log('info', 'opponent auto-resigned (disconnect)', {
               gameId,
+              playerId,
+              username: myMatch.myUsername ?? null,
               disconnectedPlayer: myMatch.opponentId,
+              disconnectedUsername: myMatch.opponentUsername ?? null,
               lastHeartbeatMsAgo: oppHbRaw ? now - lastHb : null,
             })
           }
@@ -122,8 +144,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const raw = await redis.lrange(`evaluchess:moves:${gameId}`, sinceIdx, -1) as unknown[]
-      // Upstash auto-deserializes: objects come back as objects, strings as strings.
-      // Handle both for robustness (and to cover any legacy plain-SAN entries).
       const moves = raw.map((entry) => {
         if (entry && typeof entry === 'object' && 'san' in (entry as Record<string, unknown>)) {
           const o = entry as { san: string; ms?: number | null }
@@ -138,7 +158,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return { san: String(entry), ms: null }
       })
 
-      log('info', 'move poll', { gameId, since: sinceIdx, moveCount: moves.length, resigned: !!resigned })
+      log('info', 'move poll', {
+        gameId,
+        playerId: playerId ?? null,
+        username: myMatch?.myUsername ?? null,
+        since: sinceIdx,
+        moveCount: moves.length,
+        resigned: !!resigned,
+      })
       span.setAttributes({ 'move.count': moves.length, 'game.resigned': !!resigned })
       return res.json({ moves, resigned: !!resigned })
     }
