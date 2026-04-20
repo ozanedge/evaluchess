@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 
 function getPlayerId(): string {
   let id = sessionStorage.getItem('evalu_pid')
@@ -9,15 +9,24 @@ function getPlayerId(): string {
   return id
 }
 
-export function useOnlineCount(): number {
+/**
+ * Heartbeat this client's presence every 60s. If a username is provided it's
+ * included in the request so server-side logs / observability can tie the
+ * online count back to identified players.
+ */
+export function useOnlineCount(username?: string): number {
   const [count, setCount] = useState(0)
+  const usernameRef = useRef(username)
+  usernameRef.current = username
 
   useEffect(() => {
     const id = getPlayerId()
 
     const heartbeat = async () => {
       try {
-        const res = await fetch(`/api/online?id=${id}`)
+        const params = new URLSearchParams({ id })
+        if (usernameRef.current) params.set('username', usernameRef.current)
+        const res = await fetch(`/api/online?${params.toString()}`)
         const { count } = await res.json() as { count: number }
         setCount(count)
       } catch { /* ignore */ }

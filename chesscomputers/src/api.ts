@@ -78,7 +78,9 @@ export async function resignGame(
   })
 }
 
-export async function reportOnline(playerId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/online?id=${encodeURIComponent(playerId)}`)
+export async function reportOnline(playerId: string, username?: string): Promise<void> {
+  const params = new URLSearchParams({ id: playerId })
+  if (username) params.set('username', username)
+  const res = await fetch(`${API_BASE}/api/online?${params.toString()}`)
   if (!res.ok) throw new Error(`reportOnline failed: ${res.status}`)
 }

@@ -83,7 +83,7 @@ function startPresenceLoop(cpus: ChessComputer[]): void {
     // Sequential so 10 simultaneous requests don't hit the strict per-IP rate limit.
     for (const cc of cpus) {
       try {
-        await reportOnline(cc.playerId)
+        await reportOnline(cc.playerId, cc.username)
       } catch (err) {
         console.warn(`[${cc.username}] presence ping failed: ${(err as Error).message}`)
       }
