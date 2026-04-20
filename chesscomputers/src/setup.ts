@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { auth, db } from './firebase.js'
 import {
-  BOT_USERNAMES,
+  CHESSCOMPUTER_USERNAMES,
   DAILY_ELO_MAX,
   DAILY_ELO_MIN,
   encodeUsernameKey,
@@ -14,8 +14,8 @@ function randomPassword(): string {
 }
 
 async function main() {
-  console.log('Creating bot accounts…')
-  for (const name of BOT_USERNAMES) {
+  console.log('Creating chesscomputer accounts…')
+  for (const name of CHESSCOMPUTER_USERNAMES) {
     const email = usernameToEmail(name)
     const claimKey = encodeUsernameKey(name)
     try {
@@ -44,7 +44,7 @@ async function main() {
         draws: 0,
         gamesPlayed: 0,
         createdAt: Date.now(),
-        isBot: true,
+        isChessComputer: true,
       })
       await db().ref(`usernames/${claimKey}`).set(uid)
       console.log(`  [${name}] profile seeded · elo ${initialElo}`)

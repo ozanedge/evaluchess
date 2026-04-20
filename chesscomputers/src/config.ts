@@ -1,13 +1,13 @@
-// 10 chess-themed bots with target games/day that span 25 → 3. Rate is just a
-// mean — `computeNextWaitMs` adds ±30% jitter so games don't land at fixed
-// intervals. Usernames must be 3–24 chars, start/end alphanumeric, with middle
-// chars from [a-zA-Z0-9._\-+~!] (same rules as the live sign-up form).
-export interface BotProfile {
+// 10 chess-themed accounts with target games/day that span 25 → 3. Rate is
+// just a mean — `computeNextWaitMs` adds ±30% jitter so games don't land at
+// fixed intervals. Usernames must be 3–24 chars, start/end alphanumeric, with
+// middle chars from [a-zA-Z0-9._\-+~!] (same rules as the live sign-up form).
+export interface ChessComputerProfile {
   username: string
   avgGamesPerDay: number
 }
 
-export const BOT_PROFILES: BotProfile[] = [
+export const CHESSCOMPUTER_PROFILES: ChessComputerProfile[] = [
   { username: 'knight_rider',  avgGamesPerDay: 25 },
   { username: 'pawn_storm',    avgGamesPerDay: 22 },
   { username: 'fork_and_pin',  avgGamesPerDay: 19 },
@@ -21,13 +21,13 @@ export const BOT_PROFILES: BotProfile[] = [
 ]
 
 /** Usernames only — a convenience for setup/reset scripts. */
-export const BOT_USERNAMES = BOT_PROFILES.map((p) => p.username)
+export const CHESSCOMPUTER_USERNAMES = CHESSCOMPUTER_PROFILES.map((p) => p.username)
 
 export const API_BASE = process.env.API_BASE ?? 'https://evaluchess.com'
-export const TIME_CONTROL = process.env.BOT_TIME_CONTROL ?? '5+0'
+export const TIME_CONTROL = process.env.CHESSCOMPUTER_TIME_CONTROL ?? process.env.BOT_TIME_CONTROL ?? '5+0'
 export const STARTING_CLOCK_MS = 5 * 60 * 1000
 
-// Initial startup stagger so 10 bots don't all join the pool at once.
+// Initial startup stagger so 10 chesscomputers don't all join the pool at once.
 export const INITIAL_MIN_WAIT_MS = 2 * 60 * 1000
 export const INITIAL_MAX_WAIT_MS = 20 * 60 * 1000
 
@@ -49,7 +49,7 @@ export function computeNextWaitMs(avgGamesPerDay: number): number {
 // Main loop cadence.
 export const TICK_INTERVAL_MS = 2000
 
-// How long a bot "thinks" before making each move, sampled per move.
+// How long a chesscomputer "thinks" before making each move, sampled per move.
 export const THINK_MIN_MS = 2500
 export const THINK_MAX_MS = 7500
 
@@ -58,7 +58,7 @@ export const DAILY_ELO_MIN = 850
 export const DAILY_ELO_MAX = 1475
 
 // Stale-game safety valve: if nothing has happened in a game for this long,
-// resign it so the bot doesn't get stuck.
+// resign it so the chesscomputer doesn't get stuck.
 export const GAME_STALL_MS = 7 * 60 * 1000
 
 export function randRange(min: number, max: number): number {

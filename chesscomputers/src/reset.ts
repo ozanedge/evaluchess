@@ -1,9 +1,9 @@
-// One-off manual daily reset. Useful for testing / manually rerolling bot elos.
+// One-off manual daily reset. Useful for testing / manually rerolling chesscomputer elos.
 import { db } from './firebase.js'
-import { BOT_USERNAMES, DAILY_ELO_MAX, DAILY_ELO_MIN, encodeUsernameKey, randInt } from './config.js'
+import { CHESSCOMPUTER_USERNAMES, DAILY_ELO_MAX, DAILY_ELO_MIN, encodeUsernameKey, randInt } from './config.js'
 
 async function main() {
-  for (const name of BOT_USERNAMES) {
+  for (const name of CHESSCOMPUTER_USERNAMES) {
     const snap = await db().ref(`usernames/${encodeUsernameKey(name)}`).get()
     const uid = snap.val() as string | null
     if (!uid) {

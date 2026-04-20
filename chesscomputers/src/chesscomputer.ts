@@ -41,18 +41,18 @@ interface GameState {
   lastProgressAt: number
 }
 
-type BotState =
+type ChessComputerState =
   | { kind: 'waiting'; nextGameAt: number }
   | { kind: 'searching' }
   | { kind: 'playing'; game: GameState }
 
-export interface BotInit {
+export interface ChessComputerInit {
   uid: string
   username: string
   avgGamesPerDay: number
 }
 
-export class Bot {
+export class ChessComputer {
   readonly uid: string
   readonly username: string
   readonly avgGamesPerDay: number
@@ -61,13 +61,13 @@ export class Bot {
   wins = 0
   losses = 0
   draws = 0
-  state: BotState = { kind: 'waiting', nextGameAt: 0 }
+  state: ChessComputerState = { kind: 'waiting', nextGameAt: 0 }
 
-  constructor(init: BotInit) {
+  constructor(init: ChessComputerInit) {
     this.uid = init.uid
     this.username = init.username
     this.avgGamesPerDay = init.avgGamesPerDay
-    this.playerId = `bot_${init.uid}`
+    this.playerId = `cc_${init.uid}`
   }
 
   async init(): Promise<void> {
@@ -129,7 +129,7 @@ export class Bot {
       elo: this.elo,
     })
     if (!data.matched || !data.gameId || !data.token || !data.myColor) return
-    if (data.opponentUid && data.opponentUid.startsWith('') && data.opponentUid === this.uid) {
+    if (data.opponentUid && data.opponentUid === this.uid) {
       // Shouldn't happen, but guard against self-match.
       return
     }
@@ -169,7 +169,6 @@ export class Bot {
 
     const resp = await pollMoves(g.gameId, g.knownMoveCount, this.playerId)
     if (resp.resigned) {
-      // Server marks resignation by flag; we were the one still polling → we win.
       await this.finishGame('win')
       return
     }
@@ -187,9 +186,6 @@ export class Bot {
           needFinish = 'loss'
           break
         }
-        // If opponent just moved and their clock reading is present, we could use
-        // it to estimate remaining time — but our own clock is what matters for
-        // flag detection, so skip.
         if (!isMyMove) g.lastProgressAt = now
       }
       g.knownMoveCount += resp.moves.length
@@ -199,7 +195,6 @@ export class Bot {
       }
     }
 
-    // Terminal positions.
     if (g.chess.isCheckmate()) {
       const loser = g.chess.turn() === 'w' ? 'white' : 'black'
       await this.finishGame(loser === g.myColor ? 'loss' : 'win')
@@ -210,7 +205,6 @@ export class Bot {
       return
     }
 
-    // Our turn?
     const turnColor: 'white' | 'black' = g.chess.turn() === 'w' ? 'white' : 'black'
     if (turnColor !== g.myColor) return
 
@@ -220,7 +214,6 @@ export class Bot {
     }
     if (now < g.thinkingUntil) return
 
-    // Decrement clock based on time spent "thinking". 5+0 has no increment.
     const elapsed = now - g.lastClockAnchorAt
     const remainingAfterMove = Math.max(0, g.myClockMs - elapsed)
     if (remainingAfterMove <= 0) {
@@ -231,7 +224,6 @@ export class Bot {
 
     const san = pickNoviceMove(g.chess.fen())
     if (!san) {
-      // No legal moves — should have been caught above, but bail just in case.
       await this.finishGame('draw')
       return
     }
@@ -274,7 +266,6 @@ export class Bot {
     const oppElo = typeof g.opponentElo === 'number' ? g.opponentElo : 1200
     const nextElo = newRating(this.elo, oppElo, outcome)
     const profileRef = db().ref(`users/${this.uid}`)
-    // Transaction keeps our counters in sync with any other writer (defensive).
     await profileRef.transaction((current) => {
       if (!current) return current
       const c = current as { elo?: number; wins?: number; losses?: number; draws?: number; gamesPlayed?: number }
@@ -292,7 +283,7 @@ export class Bot {
     else if (outcome === 'loss') this.losses++
     else this.draws++
 
-    // Feed the 24h leaderboard. Prune this bot's own stale events in the same write.
+    // Feed the 24h leaderboard. Prune this account's stale events in the same write.
     try {
       const eventsRef = db().ref(`gameEvents/${this.uid}`)
       const snap = await eventsRef.get()
