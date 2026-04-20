@@ -54,7 +54,7 @@ export const THINK_MIN_MS = 2500
 export const THINK_MAX_MS = 7500
 
 // Daily rating reset bounds.
-export const DAILY_ELO_MIN = 1225
+export const DAILY_ELO_MIN = 850
 export const DAILY_ELO_MAX = 1475
 
 // Stale-game safety valve: if nothing has happened in a game for this long,
