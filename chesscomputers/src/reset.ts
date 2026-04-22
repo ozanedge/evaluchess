@@ -11,6 +11,9 @@ async function main() {
       continue
     }
     const elo = randInt(DAILY_ELO_MIN, DAILY_ELO_MAX)
+    // Reset the profile counters + reroll Elo. Leave /gameEvents intact so
+    // the leaderboard's rolling 24h view keeps its historical data; per-game
+    // pruning handles aging out events older than 24h.
     await db().ref(`users/${uid}`).update({
       elo,
       wins: 0,
@@ -18,7 +21,6 @@ async function main() {
       draws: 0,
       gamesPlayed: 0,
     })
-    await db().ref(`gameEvents/${uid}`).remove()
     console.log(`  [${name}] reset to elo ${elo}`)
   }
   process.exit(0)

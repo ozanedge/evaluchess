@@ -35,6 +35,10 @@ async function dailyReset(cpus: ChessComputer[]): Promise<void> {
   console.log('=== daily reset ===')
   for (const cc of cpus) {
     const newElo = randInt(DAILY_ELO_MIN, DAILY_ELO_MAX)
+    // Reset the profile counters + reroll Elo, but intentionally leave
+    // /gameEvents alone so the leaderboard's rolling 24h window keeps its
+    // historical data. Events older than 24h are pruned per-game in
+    // chesscomputer.ts applyResult().
     await db().ref(`users/${cc.uid}`).update({
       elo: newElo,
       wins: 0,
@@ -42,7 +46,6 @@ async function dailyReset(cpus: ChessComputer[]): Promise<void> {
       draws: 0,
       gamesPlayed: 0,
     })
-    await db().ref(`gameEvents/${cc.uid}`).remove()
     cc.elo = newElo
     cc.wins = 0
     cc.losses = 0
