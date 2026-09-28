@@ -17,7 +17,9 @@ function getPlayerId(): string {
 export function useOnlineCount(username?: string): number {
   const [count, setCount] = useState(0)
   const usernameRef = useRef(username)
-  usernameRef.current = username
+  useEffect(() => {
+    usernameRef.current = username
+  }, [username])
 
   useEffect(() => {
     const id = getPlayerId()
@@ -27,9 +29,11 @@ export function useOnlineCount(username?: string): number {
         const params = new URLSearchParams({ id })
         if (usernameRef.current) params.set('username', usernameRef.current)
         const res = await fetch(`/api/online?${params.toString()}`)
-        const { count } = await res.json() as { count: number }
+        const { count } = (await res.json()) as { count: number }
         setCount(count)
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
 
     heartbeat()

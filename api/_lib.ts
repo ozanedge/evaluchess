@@ -1,42 +1,47 @@
-import { Redis } from '@upstash/redis'
-import { Ratelimit } from '@upstash/ratelimit'
+import { createHash } from 'node:crypto'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { read, putWrite, transact, backoff } from './_store.js'
 
-export const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-})
-
-const moveRatelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(150, '10 s'),
-  prefix: 'evaluchess:rl:move',
-})
-
-const strictRatelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(10, '10 s'),
-  prefix: 'evaluchess:rl:strict',
-})
-
-async function applyRateLimit(req: VercelRequest, res: VercelResponse, limiter: Ratelimit): Promise<boolean> {
-  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || 'unknown'
-  const { success } = await limiter.limit(ip)
-  if (!success) {
-    res.status(429).json({ error: 'Too many requests' })
+async function applyRateLimit(
+  req: VercelRequest,
+  res: VercelResponse,
+  name: string,
+  limit: number
+): Promise<boolean> {
+  const header = req.headers['x-forwarded-for']
+  const ip = (Array.isArray(header) ? header[0] : header)?.split(',')[0].trim() || 'unknown'
+  const key = `rate:${name}:${createHash('sha256').update(ip).digest('hex')}`
+  try {
+    // Bounded exact sliding window; TTL is cleanup, never the expiry check.
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const now = Date.now()
+      const previous = await read<number[]>(key)
+      const recent = (previous?.value || []).filter((at) => at > now - 10000).sort((a, b) => a - b)
+      if (recent.length >= limit) {
+        res.setHeader(
+          'Retry-After',
+          String(Math.max(1, Math.ceil((recent[0] + 10000 - now) / 1000)))
+        )
+        res.status(429).json({ error: 'Too many requests' })
+        return false
+      }
+      if (await transact([putWrite(key, [...recent, now], previous, { ttl: 20 })])) return true
+      await backoff(attempt)
+    }
+    throw new Error('Rate limit contention')
+  } catch (error) {
+    console.error('Rate limit unavailable', error instanceof Error ? error.name : 'UnknownError')
+    res.setHeader('Retry-After', '5')
+    res.status(503).json({ error: 'Service temporarily unavailable. Please retry.' })
     return false
   }
-  return true
 }
-
-export function checkRateLimit(req: VercelRequest, res: VercelResponse): Promise<boolean> {
-  return applyRateLimit(req, res, moveRatelimit)
-}
-
-export function checkStrictRateLimit(req: VercelRequest, res: VercelResponse): Promise<boolean> {
-  return applyRateLimit(req, res, strictRatelimit)
-}
-
-export function generateToken(): string {
-  return crypto.randomUUID()
-}
+export const checkRateLimit = (req: VercelRequest, res: VercelResponse) =>
+  applyRateLimit(req, res, 'move', 150)
+export const checkStrictRateLimit = (
+  req: VercelRequest,
+  res: VercelResponse,
+  scope: 'account' | 'leaderboard' | 'presence' = 'account'
+) => applyRateLimit(req, res, scope, 10)
+export const checkMatchmakingRateLimit = (req: VercelRequest, res: VercelResponse) =>
+  applyRateLimit(req, res, 'matchmaking', 60)

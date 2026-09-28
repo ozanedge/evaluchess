@@ -1,59 +1,21 @@
-import crypto from 'node:crypto'
-import { auth, db } from './firebase.js'
-import {
-  CHESSCOMPUTER_USERNAMES,
-  DAILY_ELO_MAX,
-  DAILY_ELO_MIN,
-  encodeUsernameKey,
-  randInt,
-  usernameToEmail,
-} from './config.js'
-
-function randomPassword(): string {
-  return crypto.randomBytes(18).toString('base64url')
-}
+import { createAccount } from './api.js'
+import { CHESSCOMPUTER_USERNAMES, requireEnv } from './config.js'
 
 async function main() {
-  console.log('Creating chesscomputer accounts…')
-  for (const name of CHESSCOMPUTER_USERNAMES) {
-    const email = usernameToEmail(name)
-    const claimKey = encodeUsernameKey(name)
+  const password = requireEnv('CHESSCOMPUTER_PASSWORD')
+  console.log('Creating Evaluchess chess-computer accounts…')
+  let failures = 0
+  for (const username of CHESSCOMPUTER_USERNAMES) {
     try {
-      let uid: string
-      const existing = await auth().getUserByEmail(email).catch(() => null)
-      if (existing) {
-        uid = existing.uid
-        console.log(`  [${name}] already exists (${uid}) — ensuring profile + claim`)
-      } else {
-        const created = await auth().createUser({
-          email,
-          password: randomPassword(),
-          displayName: name,
-        })
-        uid = created.uid
-        console.log(`  [${name}] auth user created (${uid})`)
-      }
-
-      const initialElo = randInt(DAILY_ELO_MIN, DAILY_ELO_MAX)
-      await db().ref(`users/${uid}`).set({
-        username: name,
-        usernameLower: name.toLowerCase(),
-        elo: initialElo,
-        wins: 0,
-        losses: 0,
-        draws: 0,
-        gamesPlayed: 0,
-        createdAt: Date.now(),
-        isChessComputer: true,
-      })
-      await db().ref(`usernames/${claimKey}`).set(uid)
-      console.log(`  [${name}] profile seeded · elo ${initialElo}`)
+      const result = await createAccount(username, password)
+      console.log(`  [${username}] ${result}`)
     } catch (err) {
-      console.error(`  [${name}] setup failed`, err)
+      failures++
+      console.error(`  [${username}] setup failed`, err)
     }
+    await new Promise((resolve) => setTimeout(resolve, 1200))
   }
-  console.log('Done.')
-  process.exit(0)
+  if (failures) throw new Error(`${failures} chess-computer accounts could not be configured`)
 }
 
 main().catch((err) => {

@@ -4,10 +4,7 @@ interface MetricPoint {
   attrs?: Record<string, string | number | boolean>
 }
 
-export function clientMetric(metrics: MetricPoint[]): void {
-  fetch('/api/metrics', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ metrics }),
-  }).catch(() => { /* fire and forget */ })
+export function clientMetric(_metrics: MetricPoint[]): void {
+  void _metrics
+  // Intentionally local-only. Avoid a separate telemetry service dependency.
 }

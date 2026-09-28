@@ -1,111 +1,145 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useId } from 'react'
+import type { ReactNode } from 'react'
 import type { AuthApi } from '../hooks/useAuth'
 
 interface UserBadgeProps {
   auth: AuthApi
   onlineCount: number
   onOpenAuth: (mode: 'signin' | 'signup') => void
+  children: ReactNode
 }
 
-export default function UserBadge({ auth, onlineCount, onOpenAuth }: UserBadgeProps) {
+export default function UserBadge({ auth, onlineCount, onOpenAuth, children }: UserBadgeProps) {
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const menuId = useId()
 
   useEffect(() => {
     if (!open) return
-    const onClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    const onPointerDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
         setOpen(false)
+        triggerRef.current?.focus()
       }
     }
-    window.addEventListener('mousedown', onClick)
-    return () => window.removeEventListener('mousedown', onClick)
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
   }, [open])
-
-  const onlinePill = (
-    <div className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-gray-400 glass-subtle rounded-full px-3 py-1.5">
-      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
-      {onlineCount} online
-    </div>
-  )
-
-  if (!auth.ready) return onlinePill
-
-  if (!auth.user) {
-    return (
-      <div className="flex items-center gap-2">
-        {onlinePill}
-        <button
-          onClick={() => onOpenAuth('signin')}
-          className="text-xs font-semibold px-3 py-1.5 rounded-full glass-subtle text-gray-200 hover:text-white hover:ring-white/20 transition-all"
-        >
-          Sign in
-        </button>
-      </div>
-    )
-  }
 
   const p = auth.profile
   const initial = p?.username?.[0]?.toUpperCase() ?? '?'
 
   return (
     <div className="flex items-center gap-2" ref={menuRef}>
-      {onlinePill}
+      <div className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-gray-400 glass-subtle rounded-full px-3 py-1.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+        {onlineCount} online
+      </div>
       <div className="relative">
         <button
+          ref={triggerRef}
+          type="button"
+          aria-expanded={open}
+          aria-controls={menuId}
           onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-2.5 pl-1.5 pr-4 py-1.5 rounded-full glass-subtle hover:ring-white/20 transition-all"
+          className="flex items-center gap-2.5 px-3 py-1.5 rounded-full glass-subtle text-xs font-semibold text-gray-200 hover:text-white hover:ring-white/20 transition-all"
         >
-          <span className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-sm font-bold text-white ring-1 ring-white/15">
-            {initial}
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-white tracking-tight">{p?.username ?? '…'}</span>
-            {p && (
-              <>
-                <span className="w-px h-4 bg-white/15" />
-                <span className="text-sm font-mono font-semibold text-indigo-300 tabular-nums">
-                  {p.elo}
-                </span>
-              </>
-            )}
-          </span>
-        </button>
-
-        {open && p && (
-          <div className="absolute right-0 top-full mt-2 w-56 glass rounded-xl p-3 z-30">
-            <div className="flex items-center gap-2.5 pb-3 border-b border-white/5">
-              <span className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-base font-bold text-white ring-1 ring-white/15">
+          {auth.user ? (
+            <>
+              <span className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-sm font-bold text-white ring-1 ring-white/15">
                 {initial}
               </span>
-              <div className="leading-tight">
-                <div className="text-sm font-semibold text-white">{p.username}</div>
-                <div className="text-[11px] font-mono text-indigo-300 tabular-nums">{p.elo} elo</div>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-2 py-3">
-              <Stat label="Wins"   value={p.wins}   color="text-emerald-300" />
-              <Stat label="Losses" value={p.losses} color="text-red-300" />
-              <Stat label="Draws"  value={p.draws}  color="text-gray-300" />
-            </div>
-            <button
-              onClick={() => { setOpen(false); auth.signOut() }}
-              className="w-full text-xs font-semibold py-2 rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-white/10 text-gray-200 hover:text-white transition-all"
-            >
-              Sign out
-            </button>
+              <span className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-white tracking-tight">
+                  {p?.username ?? 'Account'}
+                </span>
+                {p && (
+                  <span className="border-l border-white/15 pl-2 text-sm font-mono font-semibold text-indigo-300 tabular-nums">
+                    {p.elo}
+                  </span>
+                )}
+              </span>
+            </>
+          ) : (
+            'Settings'
+          )}
+        </button>
+
+        {open && (
+          <div
+            id={menuId}
+            role="region"
+            aria-label="Player settings"
+            className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto rounded-xl border border-white/15 bg-[#171722] p-4 shadow-2xl z-50"
+          >
+            {auth.user && p && (
+              <>
+                <div className="flex items-center gap-3 pb-3 border-b border-white/10">
+                  <span className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-base font-bold text-white">
+                    {initial}
+                  </span>
+                  <div className="min-w-0 leading-tight">
+                    <div className="truncate text-sm font-semibold text-white">{p.username}</div>
+                    <div className="text-xs font-mono text-indigo-300 tabular-nums">
+                      {p.elo} Elo
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 py-3">
+                  <Stat label="Wins" value={p.wins} color="text-emerald-300" />
+                  <Stat label="Losses" value={p.losses} color="text-red-300" />
+                  <Stat label="Draws" value={p.draws} color="text-gray-300" />
+                </div>
+              </>
+            )}
+            <section className="py-2">
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                Settings
+              </h2>
+              {children}
+            </section>
+            {auth.user && (
+              <button
+                onClick={() => {
+                  setOpen(false)
+                  void auth.signOut()
+                }}
+                className="mt-3 w-full text-xs font-semibold py-2 rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-white/10 text-gray-200 hover:text-white transition-all"
+              >
+                Sign out
+              </button>
+            )}
           </div>
         )}
       </div>
+      {auth.ready && !auth.user && (
+        <button
+          onClick={() => {
+            setOpen(false)
+            onOpenAuth('signin')
+          }}
+          className="text-xs font-semibold px-3 py-1.5 rounded-full glass-subtle text-gray-200 hover:text-white hover:ring-white/20 transition-all"
+        >
+          Sign in
+        </button>
+      )}
     </div>
   )
 }
 
 function Stat({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="flex flex-col items-center py-1.5 rounded-lg bg-white/[0.03] ring-1 ring-white/5">
+    <div className="flex flex-col items-center py-2 rounded-lg bg-white/5">
       <span className={`text-base font-bold font-mono tabular-nums ${color}`}>{value}</span>
-      <span className="text-[10px] text-gray-500 uppercase tracking-wider">{label}</span>
+      <span className="text-[10px] text-gray-400 uppercase tracking-wider">{label}</span>
     </div>
   )
 }

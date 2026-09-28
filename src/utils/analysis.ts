@@ -42,7 +42,7 @@ function winProbToAccuracy(winProbBefore: number, winProbAfter: number): number 
   return Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.04354 * delta * 100) - 3.1669))
 }
 
-function classifyMove(cpLoss: number): MoveClassification {
+export function classifyMove(cpLoss: number): MoveClassification {
   if (cpLoss <= 0) return 'best'
   if (cpLoss <= 20) return 'good'
   if (cpLoss <= 50) return 'inaccuracy'

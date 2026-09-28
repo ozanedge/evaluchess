@@ -1,0 +1,235 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "EvaluChess DynamoDB and a Vercel OIDC role scoped to one project and environment.",
+  "Parameters": {
+    "TableName": {
+      "Type": "String",
+      "Default": "evaluchess-production",
+      "AllowedPattern": "[a-zA-Z0-9_.-]{3,255}"
+    },
+    "VercelTeamSlug": {
+      "Type": "String",
+      "AllowedPattern": "[a-zA-Z0-9-]+"
+    },
+    "VercelProjectName": {
+      "Type": "String",
+      "Default": "evaluchess",
+      "AllowedPattern": "[a-zA-Z0-9-]+"
+    },
+    "VercelEnvironment": {
+      "Type": "String",
+      "Default": "production",
+      "AllowedValues": [
+        "production",
+        "preview"
+      ]
+    },
+    "ExistingOidcProviderArn": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Reuse an existing TEAM issuer provider if this AWS account already has one."
+    }
+  },
+  "Conditions": {
+    "CreateProvider": {
+      "Fn::Equals": [
+        {
+          "Ref": "ExistingOidcProviderArn"
+        },
+        ""
+      ]
+    }
+  },
+  "Resources": {
+    "Table": {
+      "Type": "AWS::DynamoDB::Table",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "TableName": {
+          "Ref": "TableName"
+        },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "pk",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "sk",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "leaderboard",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "elo",
+            "AttributeType": "N"
+          },
+          {
+            "AttributeName": "wins",
+            "AttributeType": "N"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "pk",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "sk",
+            "KeyType": "RANGE"
+          }
+        ],
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "leaderboard-wins",
+            "KeySchema": [
+              {
+                "AttributeName": "leaderboard",
+                "KeyType": "HASH"
+              },
+              {
+                "AttributeName": "wins",
+                "KeyType": "RANGE"
+              }
+            ],
+            "Projection": {
+              "ProjectionType": "INCLUDE",
+              "NonKeyAttributes": [
+                "value",
+                "uid",
+                "username",
+                "elo"
+              ]
+            }
+          },
+          {
+            "IndexName": "leaderboard",
+            "KeySchema": [
+              {
+                "AttributeName": "leaderboard",
+                "KeyType": "HASH"
+              },
+              {
+                "AttributeName": "elo",
+                "KeyType": "RANGE"
+              }
+            ],
+            "Projection": {
+              "ProjectionType": "INCLUDE",
+              "NonKeyAttributes": [
+                "value",
+                "uid",
+                "username"
+              ]
+            }
+          }
+        ],
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAt",
+          "Enabled": true
+        },
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "DeletionProtectionEnabled": true,
+        "SSESpecification": {
+          "SSEEnabled": true
+        }
+      }
+    },
+    "OidcProvider": {
+      "Type": "AWS::IAM::OIDCProvider",
+      "Condition": "CreateProvider",
+      "Properties": {
+        "Url": {
+          "Fn::Sub": "https://oidc.vercel.com/${VercelTeamSlug}"
+        },
+        "ClientIdList": [
+          {
+            "Fn::Sub": "https://vercel.com/${VercelTeamSlug}"
+          }
+        ]
+      }
+    },
+    "RuntimeRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Description": "EvaluChess runtime only; no table administration or scans.",
+        "AssumeRolePolicyDocument": {
+          "Fn::Sub": [
+            "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Principal\":{\"Federated\":\"${ProviderArn}\"},\"Condition\":{\"StringEquals\":{\"oidc.vercel.com/${VercelTeamSlug}:aud\":\"https://vercel.com/${VercelTeamSlug}\",\"oidc.vercel.com/${VercelTeamSlug}:sub\":\"owner:${VercelTeamSlug}:project:${VercelProjectName}:environment:${VercelEnvironment}\"}}}]}",
+            {
+              "ProviderArn": {
+                "Fn::If": [
+                  "CreateProvider",
+                  {
+                    "Ref": "OidcProvider"
+                  },
+                  {
+                    "Ref": "ExistingOidcProviderArn"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "EvaluChessTableAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Query"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "Table",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::Sub": "${Table.Arn}/index/leaderboard"
+                    },
+                    {
+                      "Fn::Sub": "${Table.Arn}/index/leaderboard-wins"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "TableName": {
+      "Value": {
+        "Ref": "Table"
+      }
+    },
+    "Region": {
+      "Value": {
+        "Ref": "AWS::Region"
+      }
+    },
+    "RuntimeRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "RuntimeRole",
+          "Arn"
+        ]
+      }
+    }
+  }
+}

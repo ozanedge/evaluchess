@@ -1,271 +1,286 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-
-export type SpeedPairStatus = 'idle' | 'searching' | 'matched'
+import type { OnlineGame } from '../lib/gameRules'
 
 export interface SpeedPairMatch {
+  playerId?: string
+  playerSecret?: string
   gameId: string
   myColor: 'white' | 'black'
   opponentId: string
   token: string
+  tc: string
   opponentUsername?: string
   opponentElo?: number
   opponentUid?: string
+  opponentBot?: boolean
 }
-
 export interface SpeedPairIdentity {
-  uid?: string
   username?: string
   elo?: number
 }
-
-export interface OpponentMove {
-  san: string
-  ms: number | null
+export type ServerGame = Omit<OnlineGame, 'requests'> & {
+  clocks: { whiteMs: number; blackMs: number }
+  serverNow: number
+  receivedAt: number
 }
-
-// Polling cadence tuned for responsiveness. Hidden-tab intervals are longer
-// purely because nobody's watching — they don't affect perceived feel.
-const MOVE_POLL_MS = 500
-const MOVE_POLL_HIDDEN_MS = 5000
-const JOIN_POLL_MS = 1500
-const JOIN_POLL_HIDDEN_MS = 5000
-
-function getPlayerId(): string {
-  let id = sessionStorage.getItem('evalu_pid')
-  if (!id) {
-    id = Math.random().toString(36).substring(2, 12) + Date.now().toString(36)
-    sessionStorage.setItem('evalu_pid', id)
+function playerCredentials() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('evalu_session_v3') || 'null')
+    if (saved?.id && saved?.secret) return saved as { id: string; secret: string }
+  } catch {
+    /* create a new private session */
   }
-  return id
+  const value = { id: crypto.randomUUID(), secret: crypto.randomUUID() }
+  sessionStorage.setItem('evalu_session_v3', JSON.stringify(value))
+  return value
 }
-
+async function request(path: string, init?: RequestInit) {
+  const response = await fetch(path, { ...init, signal: AbortSignal.timeout(10000) })
+  const data = await response.json()
+  if (!response.ok)
+    throw Object.assign(new Error(data.error || 'Unable to reach the game server'), {
+      status: response.status,
+      retryAfterMs: Math.max(1000, Number(response.headers.get('Retry-After')) * 1000 || 10000),
+    })
+  return data
+}
 export function useSpeedPair() {
-  const [status, setStatus] = useState<SpeedPairStatus>('idle')
+  const [credentials, setCredentials] = useState(playerCredentials)
+  const [status, setStatus] = useState<'idle' | 'searching' | 'matched'>('idle')
   const [match, setMatch] = useState<SpeedPairMatch | null>(null)
-  const [pendingOpponentMove, setPendingOpponentMove] = useState<OpponentMove | null>(null)
-  const [opponentResigned, setOpponentResigned] = useState(false)
-
-  const myId = useRef(getPlayerId())
-  const joinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const moveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const joinActiveRef = useRef(false)
-  const moveActiveRef = useRef(false)
-  const joinTickRef = useRef<(() => void) | null>(null)
-  const moveTickRef = useRef<(() => void) | null>(null)
-  const knownMoveCountRef = useRef(0)
-  const opponentMoveQueue = useRef<OpponentMove[]>([])
-  const tcRef = useRef<string>('')
-  const matchRef = useRef<SpeedPairMatch | null>(null)
-
-  useEffect(() => { matchRef.current = match }, [match])
-
-  const stopPolling = useCallback(() => {
-    joinActiveRef.current = false
-    moveActiveRef.current = false
-    joinTickRef.current = null
-    moveTickRef.current = null
-    if (joinTimerRef.current) { clearTimeout(joinTimerRef.current); joinTimerRef.current = null }
-    if (moveTimerRef.current) { clearTimeout(moveTimerRef.current); moveTimerRef.current = null }
+  const [game, setGame] = useState<ServerGame | null>(null)
+  const [error, setError] = useState('')
+  const [sending, setSending] = useState(false)
+  const gameRef = useRef<ServerGame | null>(null)
+  const pending = useRef<{ requestId: string; san: string; expectedPly: number } | null>(null)
+  const generation = useRef(0)
+  const inFlight = useRef(false)
+  const accept = useCallback((next: ServerGame) => {
+    if (
+      gameRef.current?.id === next.id &&
+      (next.version < gameRef.current.version || next.serverNow < gameRef.current.serverNow)
+    )
+      return
+    const snapshot = { ...next, receivedAt: Date.now() }
+    gameRef.current = snapshot
+    setGame(snapshot)
   }, [])
-
-  const enqueueOpponentMove = useCallback((move: OpponentMove) => {
-    opponentMoveQueue.current.push(move)
-    if (opponentMoveQueue.current.length === 1) setPendingOpponentMove(move)
-  }, [])
-
-  const clearPendingMove = useCallback(() => {
-    opponentMoveQueue.current.shift()
-    setPendingOpponentMove(opponentMoveQueue.current[0] ?? null)
-  }, [])
-
-  // Wake the active poller early whenever the tab becomes visible again.
-  useEffect(() => {
-    const onVis = () => {
-      if (document.hidden) return
-      if (moveActiveRef.current && moveTickRef.current) {
-        if (moveTimerRef.current) clearTimeout(moveTimerRef.current)
-        moveTickRef.current()
-      }
-      if (joinActiveRef.current && joinTickRef.current) {
-        if (joinTimerRef.current) clearTimeout(joinTimerRef.current)
-        joinTickRef.current()
-      }
+  const matchHeaders = useCallback(
+    (m: SpeedPairMatch) => ({
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${m.token}`,
+    }),
+    []
+  )
+  const resumeMatch = useCallback((m: SpeedPairMatch) => {
+    generation.current++
+    if (m.playerId && m.playerSecret) {
+      const restored = { id: m.playerId, secret: m.playerSecret }
+      setCredentials(restored)
+      sessionStorage.setItem('evalu_session_v3', JSON.stringify(restored))
     }
-    document.addEventListener('visibilitychange', onVis)
-    return () => document.removeEventListener('visibilitychange', onVis)
-  }, [])
-
-  const startWatchingMoves = useCallback((gameId: string, myColor: 'white' | 'black') => {
-    knownMoveCountRef.current = 0
-    moveActiveRef.current = true
-
-    const tick = async () => {
-      if (!moveActiveRef.current) return
-      if (document.hidden) {
-        moveTimerRef.current = setTimeout(tick, MOVE_POLL_HIDDEN_MS)
-        return
-      }
-      try {
-        const res = await fetch(`/api/move?gameId=${gameId}&since=${knownMoveCountRef.current}&playerId=${myId.current}`)
-        const { moves, resigned } = await res.json() as { moves: OpponentMove[]; resigned: boolean }
-        if (resigned) {
-          setOpponentResigned(true)
-          stopPolling()
-          return
-        }
-        if (moves && moves.length > 0) {
-          for (let i = 0; i < moves.length; i++) {
-            const globalIdx = knownMoveCountRef.current + i
-            const isWhiteTurn = globalIdx % 2 === 0
-            const isMyMove = (isWhiteTurn && myColor === 'white') || (!isWhiteTurn && myColor === 'black')
-            if (!isMyMove) enqueueOpponentMove(moves[i])
-          }
-          knownMoveCountRef.current += moves.length
-        }
-      } catch { /* ignore */ }
-      if (!moveActiveRef.current) return
-      moveTimerRef.current = setTimeout(tick, MOVE_POLL_MS)
-    }
-
-    moveTickRef.current = tick
-    tick()
-  }, [enqueueOpponentMove, stopPolling])
-
-  const finaliseMatch = useCallback((m: SpeedPairMatch) => {
-    if (joinTimerRef.current) { clearTimeout(joinTimerRef.current); joinTimerRef.current = null }
-    joinActiveRef.current = false
-    joinTickRef.current = null
-    setOpponentResigned(false)
+    gameRef.current = null
+    setGame(null)
+    pending.current = null
     setMatch(m)
     setStatus('matched')
-    startWatchingMoves(m.gameId, m.myColor)
-  }, [startWatchingMoves])
-
-  const joinPool = useCallback(async (tcLabel: string, identity?: SpeedPairIdentity) => {
-    tcRef.current = tcLabel
-    opponentMoveQueue.current = []
-    knownMoveCountRef.current = 0
-    setOpponentResigned(false)
-    setStatus('searching')
-
-    // Always clear any stale match record for this player ID before polling.
-    try {
-      await fetch('/api/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: myId.current, tc: tcLabel, leave: true }),
-      })
-    } catch { /* ignore */ }
-
-    joinActiveRef.current = true
-
-    const tick = async () => {
-      if (!joinActiveRef.current) return
-      if (document.hidden) {
-        joinTimerRef.current = setTimeout(tick, JOIN_POLL_HIDDEN_MS)
-        return
-      }
-      try {
-        const res = await fetch('/api/join', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: myId.current,
-            tc: tcLabel,
-            ...(identity?.uid ? { uid: identity.uid } : {}),
-            ...(identity?.username ? { username: identity.username } : {}),
-            ...(typeof identity?.elo === 'number' ? { elo: identity.elo } : {}),
-          }),
-        })
-        const data = await res.json() as {
-          matched: boolean
-          gameId?: string
-          myColor?: 'white' | 'black'
-          opponentId?: string
-          token?: string
-          opponentUsername?: string
-          opponentElo?: number
-          opponentUid?: string
-        }
-        if (data.matched && data.gameId && data.token) {
-          finaliseMatch({
-            gameId: data.gameId,
-            myColor: data.myColor!,
-            opponentId: data.opponentId!,
-            token: data.token,
-            opponentUsername: data.opponentUsername,
-            opponentElo: data.opponentElo,
-            opponentUid: data.opponentUid,
-          })
-          return
-        }
-      } catch { /* ignore */ }
-      if (!joinActiveRef.current) return
-      joinTimerRef.current = setTimeout(tick, JOIN_POLL_MS)
-    }
-
-    joinTickRef.current = tick
-    tick()
-  }, [finaliseMatch])
-
-  // Signal resignation to opponent without resetting state (call before analysis)
-  const resignGame = useCallback(async () => {
-    const m = matchRef.current
-    if (!m) return
-    stopPolling()
-    try {
-      await fetch('/api/move', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gameId: m.gameId, resign: true, playerId: myId.current, token: m.token }),
-      })
-    } catch { /* ignore */ }
-  }, [stopPolling])
-
-  const leavePool = useCallback(async () => {
-    stopPolling()
-    setStatus('idle')
-    setMatch(null)
-    setPendingOpponentMove(null)
-    setOpponentResigned(false)
-    knownMoveCountRef.current = 0
-    opponentMoveQueue.current = []
-    try {
-      await fetch('/api/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: myId.current, tc: tcRef.current, leave: true }),
-      })
-    } catch { /* ignore */ }
-  }, [stopPolling])
-
-  const sendMove = useCallback((san: string, remainingMs?: number) => {
-    const m = matchRef.current
-    if (!m) return
-    fetch('/api/move', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        gameId: m.gameId, san, playerId: myId.current, token: m.token,
-        ...(typeof remainingMs === 'number' ? { remainingMs: Math.round(remainingMs) } : {}),
-      }),
-    }).catch(() => {})
+    setError('')
   }, [])
-
   useEffect(() => {
-    return () => { stopPolling() }
-  }, [stopPolling])
-
+    if (status !== 'matched' || !match) return
+    const run = generation.current
+    let stopped = false,
+      timer: ReturnType<typeof setTimeout>
+    let polling = false
+    async function poll() {
+      if (polling || stopped) return
+      polling = true
+      try {
+        const data = await request(
+          `/api/move?gameId=${encodeURIComponent(match!.gameId)}&playerId=${credentials.id}`,
+          { headers: matchHeaders(match!) }
+        )
+        if (!stopped && generation.current === run) {
+          accept(data.game)
+          if (!pending.current) setError('')
+        }
+      } catch (e) {
+        if (!stopped && generation.current === run) setError((e as Error).message)
+      } finally {
+        polling = false
+      }
+      if (!stopped && generation.current === run && !gameRef.current?.result)
+        timer = setTimeout(poll, document.hidden ? 3000 : 750)
+    }
+    const wake = () => {
+      if (!document.hidden) {
+        clearTimeout(timer)
+        void poll()
+      }
+    }
+    void poll()
+    document.addEventListener('visibilitychange', wake)
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', wake)
+    }
+  }, [status, match, credentials.id, accept, matchHeaders])
+  const joinPool = useCallback(
+    async (tc: string, identity?: SpeedPairIdentity) => {
+      const run = ++generation.current
+      setStatus('searching')
+      setMatch(null)
+      pending.current = null
+      setError('')
+      setGame(null)
+      gameRef.current = null
+      let failures = 0
+      while (generation.current === run) {
+        let delay = 2000
+        try {
+          const data = await request('/api/join', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-player-secret': credentials.secret,
+            },
+            body: JSON.stringify({ id: credentials.id, tc, username: identity?.username }),
+          })
+          if (generation.current !== run) return
+          if (data.matched) {
+            resumeMatch({
+              ...data.match,
+              playerId: credentials.id,
+              playerSecret: credentials.secret,
+            })
+            return
+          }
+          failures = 0
+          setError('')
+        } catch (e) {
+          const failure = e as Error & { status?: number; retryAfterMs?: number }
+          delay = Math.max(failure.status === 429 ? failure.retryAfterMs || 10000 : 0, Math.min(30000, 2000 * 2 ** Math.min(++failures, 4)))
+          if (generation.current === run) setError(failure.status === 429
+            ? 'Matchmaking is busy. Retrying automatically in a moment.'
+            : `${failure.message}. Retrying matchmaking automatically.`)
+        }
+        await new Promise((resolve) => setTimeout(resolve, delay))
+      }
+    },
+    [credentials, resumeMatch]
+  )
+  const leavePool = useCallback(async () => {
+    generation.current++
+    try {
+      await request('/api/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-player-secret': credentials.secret },
+        body: JSON.stringify({ id: credentials.id, leave: true }),
+      })
+      setStatus('idle')
+      setMatch(null)
+      setGame(null)
+      gameRef.current = null
+      pending.current = null
+      setError('')
+      return true
+    } catch (e) {
+      setError((e as Error).message)
+      if ((e as Error & { status?: number }).status === 409) {
+        try {
+          const current = await request(`/api/status?id=${credentials.id}`, {
+            headers: { 'x-player-secret': credentials.secret },
+          })
+          if (current.matched)
+            resumeMatch({
+              ...current.match,
+              playerId: credentials.id,
+              playerSecret: credentials.secret,
+            })
+        } catch {
+          /* Keep the error visible for a user retry. */
+        }
+      }
+      return false
+    }
+  }, [credentials, resumeMatch])
+  const sendMove = useCallback(
+    async (san: string) => {
+      if (!match || inFlight.current || !gameRef.current || gameRef.current.result) return
+      const action = pending.current || {
+        san,
+        expectedPly: gameRef.current.moves.length,
+        requestId: crypto.randomUUID(),
+      }
+      pending.current = action
+      inFlight.current = true
+      setSending(true)
+      setError('')
+      try {
+        const data = await request('/api/move', {
+          method: 'POST',
+          headers: matchHeaders(match),
+          body: JSON.stringify({ ...action, gameId: match.gameId, playerId: credentials.id }),
+        })
+        pending.current = null
+        accept(data.game)
+      } catch (e) {
+        const status = (e as Error & { status?: number }).status
+        if (status && [400, 403, 409].includes(status)) {
+          pending.current = null
+          setError((e as Error).message)
+        } else setError(`${(e as Error).message}. Retry to confirm your move.`)
+      } finally {
+        inFlight.current = false
+        setSending(false)
+      }
+    },
+    [match, credentials.id, accept, matchHeaders]
+  )
+  const retryMove = useCallback(() => {
+    if (pending.current) void sendMove(pending.current.san)
+  }, [sendMove])
+  const resignGame = useCallback(async () => {
+    if (!match || inFlight.current) return false
+    inFlight.current = true
+    setSending(true)
+    try {
+      const data = await request('/api/move', {
+        method: 'POST',
+        headers: matchHeaders(match),
+        body: JSON.stringify({ gameId: match.gameId, playerId: credentials.id, resign: true }),
+      })
+      pending.current = null
+      accept(data.game)
+      setError('')
+      return true
+    } catch (e) {
+      setError((e as Error).message)
+      return false
+    } finally {
+      inFlight.current = false
+      setSending(false)
+    }
+  }, [match, credentials.id, accept, matchHeaders])
+  useEffect(
+    () => () => {
+      generation.current++
+    },
+    []
+  )
   return {
     status,
     match,
-    pendingOpponentMove,
-    opponentResigned,
-    clearPendingMove,
+    game,
+    error,
+    sending,
     joinPool,
     leavePool,
+    resumeMatch,
     resignGame,
     sendMove,
-    isConfigured: true,
+    retryMove,
+    canRetryMove: pending.current !== null,
   }
 }

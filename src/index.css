@@ -135,3 +135,16 @@ body {
 .dot-pulse {
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
+
+@keyframes move-arrows-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.move-arrows-fade {
+  animation: move-arrows-fade 5s linear forwards;
+}

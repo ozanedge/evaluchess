@@ -123,6 +123,9 @@ export default function AuthModal({ auth, onClose, initialMode = 'signin' }: Aut
         <p className="text-[11px] text-gray-500 leading-relaxed mt-4 text-center">
           Signing in unlocks Elo rating and W/L tracking for Speed Pair games. Guest play still works anytime.
         </p>
+        <p className="text-[11px] text-amber-300/80 leading-relaxed mt-2 text-center">
+          Accounts moved to Evaluchess storage. If you used the old sign-in, create your username again once.
+        </p>
       </div>
     </div>
   )

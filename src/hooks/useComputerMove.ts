@@ -1,49 +1,17 @@
 import { useRef, useCallback, useEffect } from 'react'
-
+import { Engine } from '../lib/engine'
 export function useComputerMove() {
-  const workerRef = useRef<Worker | null>(null)
-  const readyRef = useRef(false)
-
-  useEffect(() => {
-    const worker = new Worker('/stockfish.js')
-    workerRef.current = worker
-
-    worker.addEventListener('message', (e: MessageEvent) => {
-      const line: string = e.data
-      if (typeof line !== 'string') return
-      if (line.includes('uciok')) {
-        readyRef.current = true
-      }
-    })
-
-    worker.postMessage('uci')
-    return () => worker.terminate()
+  const engine = useRef<Engine | null>(null)
+  const cancel = useCallback(() => {
+    engine.current?.cancel()
+    engine.current = null
   }, [])
-
-  const getMove = useCallback((fen: string, elo: number): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const worker = workerRef.current
-      if (!worker || !readyRef.current) return reject('not ready')
-
-      const handler = (e: MessageEvent) => {
-        const line: string = e.data
-        if (typeof line !== 'string') return
-        if (line.startsWith('bestmove')) {
-          worker.removeEventListener('message', handler)
-          const move = line.split(' ')[1]
-          if (move && move !== '(none)') resolve(move)
-          else reject('no move')
-        }
-      }
-
-      worker.addEventListener('message', handler)
-      worker.postMessage('setoption name UCI_LimitStrength value true')
-      worker.postMessage(`setoption name UCI_Elo value ${elo}`)
-      worker.postMessage('ucinewgame')
-      worker.postMessage(`position fen ${fen}`)
-      worker.postMessage('go movetime 800')
-    })
+  const getMove = useCallback(async (fen: string, elo: number) => {
+    if (!engine.current) engine.current = new Engine()
+    const result = await engine.current.evaluate(fen, { elo, movetime: 800, depth: 18 })
+    if (!result.bestMove) throw new Error('Computer could not choose a move. Please retry.')
+    return result.bestMove
   }, [])
-
-  return { getMove }
+  useEffect(() => cancel, [cancel])
+  return { getMove, cancel }
 }

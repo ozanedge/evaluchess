@@ -1,80 +1,129 @@
-# Evaluchess Chesscomputer Worker
+# Evaluchess chess-computer worker
 
-Long-running Node process that runs 10 chess-themed chesscomputer accounts. Each chesscomputer:
+An optional long-running Node process that keeps chess-themed accounts in the
+Speed Pair pool. It uses the same public Evaluchess account and game APIs as a
+browser. It has no direct database access and no Firebase dependency.
 
-- Has its own **target games-per-day** ranging from ~25/day for the most active down to ~3/day for the least active. See `CHESSCOMPUTER_PROFILES` in `src/config.ts`.
-- First game lands within 2–20 min of worker startup (staggered so they don't swarm the pool).
-- Joins **Speed Pair 5+0** matchmaking via the same `/api/join` endpoint the web app uses.
-- Plays with a **novice (~800 Elo) heuristic** engine — takes mates and hanging pieces, blunders occasionally, prefers the center slightly.
-- Has its **Elo, wins, losses, draws reset to 0** each day at midnight UTC, with a fresh random Elo between **850 and 1475**.
-- Writes to `/users/<uid>` + `/gameEvents/<uid>` in Firebase so it shows up naturally on the 24h leaderboard.
+## Setup
 
-## One-time setup
+Create `.env` from `.env.example` and set:
 
-1. **Generate a Firebase service account**
-   - Firebase Console → gear icon → **Project settings** → **Service accounts** tab → **Generate new private key** → download JSON.
+- `API_BASE` to the Evaluchess deployment.
+- `CHESSCOMPUTER_PASSWORD` to one long random password used only for these accounts.
 
-2. **Copy the env template**
-   ```bash
-   cd chesscomputers
-   cp .env.example .env
-   ```
+Create the accounts once, then start the worker:
 
-3. **Fill in `.env`** with values from the downloaded service-account JSON:
-   - `FIREBASE_PROJECT_ID` = `project_id`
-   - `FIREBASE_CLIENT_EMAIL` = `client_email`
-   - `FIREBASE_PRIVATE_KEY` = `private_key` (wrap the whole multi-line string in `"…"` so the literal `\n` characters survive)
-   - `FIREBASE_DATABASE_URL` = `https://<your-project>-default-rtdb.firebaseio.com`
-
-4. **Install + create the 10 accounts**
-   ```bash
-   npm install
-   npm run setup:local
-   ```
-   This creates each chesscomputer as a Firebase Auth user, claims its username, and seeds its profile with a random Elo.
-
-## Running locally
-
-```bash
+```sh
+# Install root dependencies too: the worker uses the project's Stockfish package.
+npm ci --prefix ..
+npm install
+npm run setup:local
 npm run start:local
 ```
 
-Watch the logs — each chesscomputer announces when it joins the pool, makes a move, or finishes a game.
+The setup command is idempotent: existing accounts are verified with the configured
+password and left in place. A password mismatch fails setup; it never resets an
+existing account. Recover the correct credentials before restarting setup.
 
-## Deploying on Railway (recommended)
+After creating accounts, initialize their starting ratings once with the operator
+script below, from the repository root. This step needs the root dependencies and
+AWS credentials for the intended table; the running worker does not. Omit
+`--apply` to preview first.
 
-1. Push the repo to GitHub (the `chesscomputers/` folder lives inside it).
-2. On [Railway](https://railway.app) → **New Project** → **Deploy from GitHub repo**.
-3. In the project settings:
-   - **Root directory**: `chesscomputers`
-   - Railway will auto-detect the Dockerfile and build it.
-4. Add the `FIREBASE_*` env vars and `API_BASE` from your local `.env` to Railway's variables panel.
-5. Deploy.
+```sh
+AWS_PROFILE=skynetops DYNAMODB_REGION=us-west-2 DYNAMODB_TABLE=evaluchess-production \
+  node --env-file=chesscomputers/.env \
+  --import ./chesscomputers/node_modules/tsx/dist/loader.mjs \
+  scripts/seed-bot-ratings.ts --apply
+```
 
-Railway's Hobby plan is $5/mo and keeps the process running 24/7. Memory usage is negligible (<150 MB).
+The ten `initialRating` values in `src/config.ts` span 400–1600. Initialization
+verifies each configured account's password and shifts its 1200 starting point,
+preserving earned rating changes and game statistics. A permanent marker prevents
+repeat initialization, including concurrent runs. Account ratings and their
+leaderboard entries update atomically. Ratings then change normally after games;
+there is no daily reset.
 
-## Other hosts
-
-- **Fly.io**: `fly launch` inside `chesscomputers/`, then `fly secrets set FIREBASE_PROJECT_ID=... FIREBASE_CLIENT_EMAIL=... FIREBASE_PRIVATE_KEY="..." FIREBASE_DATABASE_URL=...`
-- **Render**: Background Worker → point at `chesscomputers/` → Docker → add secrets.
-- **Any Docker host**: `docker build -t evaluchess-chesscomputers chesscomputers && docker run --env-file chesscomputers/.env evaluchess-chesscomputers`
+The worker can run on any Docker host. Its only remote dependency is the
+Evaluchess API configured by `API_BASE`; the API owns authentication, clocks,
+moves, results and ratings.
 
 ## Tuning
 
-All knobs live in `src/config.ts`:
+Game frequency, time control, startup staggering and thinking time live in
+`src/config.ts`.
 
-| constant | default | effect |
-| --- | --- | --- |
-| `CHESSCOMPUTER_PROFILES` | 10 accounts, 25 → 3 games/day | account list + per-account target rate |
-| `TIME_CONTROL` | `'5+0'` | matchmaking time control |
-| `INITIAL_*_WAIT_MS` | 2–20 min | delay before each account's first game |
-| `computeNextWaitMs` | `1d / rate - 4m`, ±30% jitter | between-games wait sampler |
-| `THINK_*_MS` | 2.5–7.5 s | per-move "thinking" delay |
-| `DAILY_ELO_MIN/MAX` | 850–1475 | daily reset band |
+Each bot's `initialRating` is also its fixed playing-strength target. The worker
+uses the full Stockfish 18 engine already installed by the main project. Every
+search enables `UCI_LimitStrength` and sets that bot's `UCI_Elo`. Stockfish's native
+minimum is 1320; below that, a linearly increasing chance of a random legal move
+adds mistakes (about 5% at 1250, up to 60% at 400). Targets are approximate, not
+calibrated human Elo. See [Stockfish's strength controls](https://official-stockfish.github.io/docs/stockfish-wiki/Stockfish-FAQ.html#how-do-skill-level-and-uci-elo-work).
 
-## Manual reset
+Strength stays fixed when an account's earned leaderboard rating changes. One
+child engine serializes searches across bots, reapplies strength per move, and
+limits each search to 250 ms. Engine failures are reported and retried on the next
+tick; the worker does not silently switch everyone back to a shared weak engine.
 
-If you want to force a rating reset without waiting for midnight:
-```bash
-npm run reset:local
+| Bot | Strength target | Target games/day |
+| --- | ---: | ---: |
+| KasparovClone | 1600 | 25 |
+| pawn.eater | 650 | 22 |
+| Bishop-Bash | 950 | 19 |
+| fianchetto | 1250 | 16 |
+| Tal-hunter99 | 1450 | 13 |
+| ZugZwang | 1350 | 11 |
+| en.passant | 800 | 9 |
+| Queen+Rook | 1100 | 7 |
+| mattsquad | 550 | 5 |
+| 64Squares | 400 | 3 |
+
+These are averages for continuous uptime. Between-game waits have ±30% jitter;
+opponent availability, actual game length and Mac sleep can reduce the totals.
+All games are 5+0. Bots can pair with each other, so summing their individual game
+counts double-counts those matches.
+
+The schedule controls background games. During breaks, idle bots stay in a
+standby queue and accept humans who have waited 12 seconds. A waiting human
+always has priority over a bot; among available bots, the API chooses the closest
+account rating. Standby bots do not pair with one another. The worker reserves
+two idle bots from scheduled background games, and human matches can exceed the
+daily targets. If all bots are playing or the worker is offline, matchmaking
+continues waiting for an available opponent.
+
+The server recognizes bots by their operator-created rating initialization
+marker and authenticated account. Client-supplied names or bot flags cannot
+grant standby access. Queue heartbeats expire after 20 seconds; polling preserves
+the human's original wait time. Game creation and reservation are one DynamoDB
+transaction, preventing two people from claiming the same bot.
+
+## Supervised worker on this Mac
+
+The worker is installed as `com.evaluchess.chesscomputers` in the user's
+`~/Library/LaunchAgents/` directory. It starts at login and restarts after a
+crash. Locking the screen does not stop it; sleep, logout, and shutdown pause
+availability. Credentials are in the ignored `chesscomputers/.env` file with
+owner-only permissions. Do not copy that file into a deployment or commit it.
+
+Logs are in `~/Library/Logs/EvaluChess/chesscomputers.log` and
+`chesscomputers-error.log`. All 10 accounts use the public account API and 5+0.
+Their first background games are staggered 2–20 minutes after startup, then each
+follows its configured games-per-day schedule. Standby starts immediately after
+initialization and refreshes about every 6 seconds. Presence is refreshed every
+50 seconds.
+
+Account setup verifies the password for existing usernames and exits with an
+error if any account cannot be configured. The worker refreshes authentication
+before each new game and clears completed matches before rejoining the pool.
+
+For an isolated end-to-end worker check, set `JAVA` and `DYNAMODB_LOCAL_JAR` as
+in the main README, then run from the repository root:
+
+```sh
+node --import ./chesscomputers/node_modules/tsx/dist/loader.mjs tests/bots.mjs
+node --import ./chesscomputers/node_modules/tsx/dist/loader.mjs tests/bot-ratings.mjs
+node --import ./chesscomputers/node_modules/tsx/dist/loader.mjs tests/bot-engine.mjs
+node tests/matchmaking-bots.mjs
 ```
+
+This uses DynamoDB Local and a local API server; no live accounts are touched.

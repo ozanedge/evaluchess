@@ -1,28 +1,23 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { redis, checkStrictRateLimit } from './_lib.js'
-import { tracer, flush, recordError, log } from './_otel.js'
-
+import { checkMatchmakingRateLimit } from './_lib.js'
+import { findMatch } from './_matchmaking.js'
+import { sessionHash } from './join.js'
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const span = tracer.startSpan('status')
-
+  res.setHeader('Cache-Control', 'no-store')
+  if (req.method !== 'GET') return res.status(405).end()
+  if (!(await checkMatchmakingRateLimit(req, res))) return
+  const id = req.query.id,
+    session = sessionHash(req.headers['x-player-secret'])
+  if (typeof id !== 'string' || !session)
+    return res.status(400).json({ error: 'Invalid player credentials' })
   try {
-    if (req.method !== 'GET') { return res.status(405).end() }
-    if (!await checkStrictRateLimit(req, res)) { span.setAttribute('rate_limited', true); return }
-
-    const { id } = req.query as { id: string }
-    if (!id) { return res.status(400).json({ error: 'missing id' }) }
-
-    span.setAttribute('player.id', id)
-    const match = await redis.get(`evaluchess:match:${id}`) as { gameId: string; myColor: string; opponentId: string } | null
-    log('info', 'status check', { playerId: id, matched: !!match, ...(match ? { gameId: match.gameId, color: match.myColor, opponentId: match.opponentId } : {}) })
-    span.setAttributes({ 'matched': !!match, ...(match ? { 'game.id': match.gameId, 'player.color': match.myColor } : {}) })
-    return res.json(match ? { matched: true, ...(match as object) } : { matched: false })
-  } catch (err) {
-    recordError(span, err)
-    log('error', 'status handler error', { error: String(err) })
-    return res.status(500).json({ error: 'internal error' })
-  } finally {
-    span.end()
-    flush()
+    const match = await findMatch(id)
+    if (!match) return res.json({ matched: false })
+    if (match.session !== session) return res.status(403).json({ error: 'Unauthorized' })
+    const { session: _session, ...publicMatch } = match
+    void _session
+    return res.json({ matched: true, match: publicMatch })
+  } catch {
+    return res.status(503).json({ error: 'Match status unavailable' })
   }
 }

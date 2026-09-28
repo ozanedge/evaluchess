@@ -6,16 +6,12 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "setup": "tsx src/setup.ts",
-    "reset": "tsx src/reset.ts",
     "dev": "tsx watch src/index.ts",
     "start:local": "node --env-file=.env --import tsx src/index.ts",
-    "setup:local": "node --env-file=.env --import tsx src/setup.ts",
-    "reset:local": "node --env-file=.env --import tsx src/reset.ts",
-    "rename:local": "node --env-file=.env --import tsx src/rename.ts"
+    "setup:local": "node --env-file=.env --import tsx src/setup.ts"
   },
   "dependencies": {
     "chess.js": "^1.4.0",
-    "firebase-admin": "^12.7.0",
     "tsx": "^4.19.2",
     "typescript": "~5.9.3"
   },

@@ -15,7 +15,7 @@ function formatTime(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
-export default function ClockDisplay({ timeMs, isActive, isFlagged, color: _color }: ClockDisplayProps) {
+export default function ClockDisplay({ timeMs, isActive, isFlagged }: ClockDisplayProps) {
   const isLow = timeMs < 10000
   const isVeryLow = timeMs < 5000
 

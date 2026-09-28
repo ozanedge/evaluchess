@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
 export interface ClockState {
-  timeWhite: number  // milliseconds
+  timeWhite: number // milliseconds
   timeBlack: number
   activeColor: 'white' | 'black' | null
   flagged: 'white' | 'black' | null
@@ -63,18 +63,21 @@ export function useChessClock(initialSeconds: number, incrementSeconds: number) 
   // to its previous value, in which case the tick effect doesn't re-run and a
   // manual clearTick would leave the clock permanently frozen. Let the effect's
   // own cleanup/setup drive the interval lifecycle instead.
-  const onMove = useCallback((colorWhoMoved: 'white' | 'black', remainingMs?: number) => {
-    const inc = incrementSeconds * 1000
-    if (colorWhoMoved === 'white') {
-      if (remainingMs !== undefined) setTimeWhite(Math.max(0, remainingMs) + inc)
-      else setTimeWhite((prev) => prev + inc)
-      setActiveColor('black')
-    } else {
-      if (remainingMs !== undefined) setTimeBlack(Math.max(0, remainingMs) + inc)
-      else setTimeBlack((prev) => prev + inc)
-      setActiveColor('white')
-    }
-  }, [incrementSeconds])
+  const onMove = useCallback(
+    (colorWhoMoved: 'white' | 'black', remainingMs?: number) => {
+      const inc = incrementSeconds * 1000
+      if (colorWhoMoved === 'white') {
+        if (remainingMs !== undefined) setTimeWhite(Math.max(0, remainingMs) + inc)
+        else setTimeWhite((prev) => prev + inc)
+        setActiveColor('black')
+      } else {
+        if (remainingMs !== undefined) setTimeBlack(Math.max(0, remainingMs) + inc)
+        else setTimeBlack((prev) => prev + inc)
+        setActiveColor('white')
+      }
+    },
+    [incrementSeconds]
+  )
 
   // Start white's clock (call at game start)
   const start = useCallback(() => {
@@ -86,14 +89,24 @@ export function useChessClock(initialSeconds: number, incrementSeconds: number) 
     setActiveColor(null)
   }, [clearTick])
 
-  const reset = useCallback((newInitialSeconds?: number) => {
-    clearTick()
-    const ms = (newInitialSeconds ?? initialSeconds) * 1000
-    setTimeWhite(ms)
-    setTimeBlack(ms)
-    setActiveColor(null)
-    setFlagged(null)
-  }, [clearTick, initialSeconds])
+  const reset = useCallback(
+    (newInitialSeconds?: number) => {
+      clearTick()
+      const ms = (newInitialSeconds ?? initialSeconds) * 1000
+      setTimeWhite(ms)
+      setTimeBlack(ms)
+      setActiveColor(null)
+      setFlagged(null)
+    },
+    [clearTick, initialSeconds]
+  )
 
-  return { timeWhite, timeBlack, activeColor, flagged, onMove, start, stop, reset }
+  const sync = useCallback((whiteMs: number, blackMs: number, active: 'white' | 'black' | null) => {
+    lastTickRef.current = Date.now()
+    setTimeWhite(whiteMs)
+    setTimeBlack(blackMs)
+    setFlagged(null)
+    setActiveColor(active)
+  }, [])
+  return { sync, timeWhite, timeBlack, activeColor, flagged, onMove, start, stop, reset }
 }
