@@ -80,17 +80,14 @@ export default function Leaderboard() {
           ? 'text-orange-300'
           : 'text-gray-500'
 
-  // Podium rows get custom gradients + matching hover state. Everyone else
-  // gets a subtle neutral row that still lifts on hover.
-  const rowStyle = (i: number) => {
-    if (i === 0)
-      return 'bg-gradient-to-br from-amber-500/25 via-yellow-300/10 to-amber-600/25 ring-amber-300/40 shadow-[inset_0_1px_0_rgba(253,224,71,0.35),0_0_24px_-4px_rgba(251,191,36,0.35)] hover:from-amber-500/35 hover:via-yellow-300/20 hover:to-amber-600/35 hover:ring-amber-300/60 hover:shadow-[inset_0_1px_0_rgba(253,224,71,0.5),0_0_32px_-4px_rgba(251,191,36,0.55)] hover:-translate-y-0.5'
-    if (i === 1)
-      return 'bg-gradient-to-br from-slate-200/20 via-gray-100/10 to-slate-400/25 ring-slate-200/40 shadow-[inset_0_1px_0_rgba(226,232,240,0.4),0_0_20px_-4px_rgba(203,213,225,0.3)] hover:from-slate-200/30 hover:via-gray-100/20 hover:to-slate-400/35 hover:ring-slate-200/60 hover:shadow-[inset_0_1px_0_rgba(226,232,240,0.55),0_0_28px_-4px_rgba(203,213,225,0.5)] hover:-translate-y-0.5'
-    if (i === 2)
-      return 'bg-gradient-to-br from-orange-500/25 via-amber-700/10 to-orange-700/25 ring-orange-400/40 shadow-[inset_0_1px_0_rgba(253,186,116,0.35),0_0_20px_-4px_rgba(251,146,60,0.3)] hover:from-orange-500/35 hover:via-amber-700/20 hover:to-orange-700/35 hover:ring-orange-400/60 hover:shadow-[inset_0_1px_0_rgba(253,186,116,0.5),0_0_28px_-4px_rgba(251,146,60,0.5)] hover:-translate-y-0.5'
-    return 'bg-white/[0.03] ring-white/5 hover:bg-white/[0.07] hover:ring-white/15 hover:-translate-y-0.5'
-  }
+  const rowStyle = (i: number) =>
+    i === 0
+      ? 'bg-amber-300/8'
+      : i === 1
+        ? 'bg-slate-200/5'
+        : i === 2
+          ? 'bg-orange-300/5'
+          : 'bg-white/[0.02]'
 
   return (
     <div className="flex flex-col gap-3 lg:flex-1 lg:min-h-0">
@@ -129,44 +126,67 @@ export default function Leaderboard() {
         </div>
       )}
       {data && data.rows.length > 0 && (
-        <div className="flex flex-col gap-1 overflow-x-auto lg:flex-1 lg:min-h-0">
-          <div className="grid min-w-[20rem] grid-cols-[1.25rem_minmax(0,1fr)_2.5rem_2.5rem_2.75rem_auto] items-center gap-2 px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-gray-600">
-            <span className="text-center">#</span>
-            <span>Player</span>
-            <span className="text-right text-emerald-300/80">Wins</span>
-            <span className="text-right" title="Current rating">
-              Elo
-            </span>
-            <span className="text-right" title="Rating change in the last 24 hours">
-              Δ Elo
-            </span>
-            <span className="text-right">L / D</span>
-          </div>
-          {data.rows.map((row, i) => (
-            <div
-              key={row.uid}
-              className={`grid min-w-[20rem] grid-cols-[1.25rem_minmax(0,1fr)_2.5rem_2.5rem_2.75rem_auto] items-center gap-2 px-3 py-2.5 rounded-xl ring-1 transition-all duration-200 ease-out cursor-default lg:flex-1 lg:min-h-0 ${rowStyle(i)}`}
-            >
-              <span className={`text-center text-sm font-bold tabular-nums ${medalColor(i)}`}>
-                {i + 1}
-              </span>
-              <span className="text-sm font-semibold text-white truncate">{row.username}</span>
-              <span className="text-right text-base font-mono font-bold text-emerald-300 tabular-nums">
-                {row.wins}
-              </span>
-              <span className="text-right text-sm font-mono font-semibold text-gray-200 tabular-nums">
-                {row.elo ?? '—'}
-              </span>
-              <span className="text-right text-sm font-mono font-semibold text-indigo-300 tabular-nums">
-                {row.ratingChange > 0 ? '+' : ''}
-                {row.ratingChange}
-              </span>
-              <div className="flex items-center gap-2 text-[11px] font-mono tabular-nums shrink-0 justify-end">
-                <span className="text-red-300">{row.losses}L</span>
-                <span className="text-gray-400">{row.draws}D</span>
-              </div>
-            </div>
-          ))}
+        <div
+          className="overflow-x-auto"
+          tabIndex={0}
+          role="region"
+          aria-label="Scrollable leaderboard"
+        >
+          <table className="leaderboard-table" aria-label="Leaderboard for the last 24 hours">
+            <colgroup>
+              <col style={{ width: 36 }} />
+              <col />
+              <col style={{ width: 60 }} />
+              <col style={{ width: 62 }} />
+              <col style={{ width: 62 }} />
+              <col style={{ width: 66 }} />
+              <col style={{ width: 76 }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col">#</th>
+                <th scope="col">Player</th>
+                <th scope="col" className="text-emerald-300">
+                  Wins
+                </th>
+                <th scope="col">Losses</th>
+                <th scope="col">Draws</th>
+                <th scope="col" title="Current rating">
+                  Elo
+                </th>
+                <th scope="col" title="Rating change in the last 24 hours">
+                  Δ Elo
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((row, i) => (
+                <tr key={row.uid} className={rowStyle(i)}>
+                  <td
+                    className={`font-bold ${medalColor(i)}`}
+                    style={{
+                      borderLeftColor: ['#fcd34d', '#cbd5e1', '#fdba74'][i] || 'transparent',
+                    }}
+                  >
+                    {i + 1}
+                  </td>
+                  <td className="font-semibold text-white">
+                    <span className="block truncate" title={row.username}>
+                      {row.username}
+                    </span>
+                  </td>
+                  <td className="font-mono font-bold text-emerald-300">{row.wins}</td>
+                  <td className="font-mono text-red-300">{row.losses}</td>
+                  <td className="font-mono text-gray-400">{row.draws}</td>
+                  <td className="font-mono font-semibold text-gray-200">{row.elo ?? '—'}</td>
+                  <td className="font-mono font-semibold text-indigo-300">
+                    {row.ratingChange > 0 ? '+' : ''}
+                    {row.ratingChange}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

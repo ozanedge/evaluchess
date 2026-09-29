@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore } from 'react'
 import { Chess } from 'chess.js'
 import { Chessboard } from 'react-chessboard'
 import { useStockfish } from './hooks/useStockfish'
@@ -20,6 +20,11 @@ import { moveFeedback, MOVE_COLORS } from './utils/moveFeedback'
 import AuthModal from './components/AuthModal'
 import UserBadge from './components/UserBadge'
 import GameSettings from './components/GameSettings'
+import Icon from './components/Icon'
+import TrainingProgress from './components/TrainingProgress'
+import PersonalProgress from './components/PersonalProgress'
+import { useAccountProgress } from './hooks/useAccountProgress'
+import { progressOwner, progressRevision, subscribeProgress } from './lib/progressScope'
 import { boardAppearance } from './components/boardAppearance'
 import { readSettings, SETTINGS_KEY } from './lib/settings'
 import type { PlayerSettings } from './lib/settings'
@@ -118,7 +123,7 @@ export default function App() {
     const update = () => {
       const available = window.innerWidth - 32 // 16px padding each side on mobile
       const size = Math.min(600, available - EVAL_BAR - GAP)
-      setBoardSize(Math.max(280, size))
+      setBoardSize(Math.max(200, size))
     }
     update()
     window.addEventListener('resize', update)
@@ -202,11 +207,22 @@ export default function App() {
   const { getMove: getComputerMove, cancel: cancelComputer } = useComputerMove()
   const speedPair = useSpeedPair()
   const auth = useAuth()
+  const accountProgress = useAccountProgress(auth.user?.uid || null, auth.loading)
+  const libraryRevision = useSyncExternalStore(subscribeProgress, progressRevision)
+  const libraryOwner = useRef(progressOwner())
+  const renderedLibraryOwner = libraryOwner.current
+  useEffect(() => {
+    if (libraryOwner.current !== progressOwner()) {
+      libraryOwner.current = progressOwner()
+      resetGame(false)
+    }
+    setSavedActive(readLibrary().active)
+  }, [libraryRevision]) // eslint-disable-line react-hooks/exhaustive-deps
   const onlineCount = useOnlineCount(auth.profile?.username)
   const [authModal, setAuthModal] = useState<null | 'signin' | 'signup'>(null)
-  const [menuView, setMenuView] = useState<'speed-pair' | 'computer' | 'leaderboard' | 'library'>(
-    'speed-pair'
-  )
+  const [menuView, setMenuView] = useState<
+    'speed-pair' | 'computer' | 'leaderboard' | 'library' | 'progress'
+  >('speed-pair')
   const [ratingChange, setRatingChange] = useState<{ delta: number; next: number } | null>(null)
   useEffect(() => () => destroy(), [destroy])
 
@@ -298,12 +314,13 @@ export default function App() {
           : `Draw (${reason}).`
       )
       triggerAnalysis(restored.fens, snapshot.moves, speedPair.match!.myColor)
-    } else if (changed && restored.game.turn() === playerColor[0]) tryPremove()
-  }, [speedPair.game, gameState]) // eslint-disable-line react-hooks/exhaustive-deps
+    } else if (!speedPair.sending && restored.game.turn() === playerColor[0]) tryPremove()
+  }, [speedPair.game, speedPair.sending, gameState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function tryPremove() {
     const pm = premoveRef.current
     if (!pm || !settingsRef.current.premoves) return
+    if (gameModeRef.current === 'speed-pair' && speedPair.sending) return
     premoveRef.current = null
     setPremove(null)
     try {
@@ -522,7 +539,9 @@ export default function App() {
     const currentGame = gameRef.current
     const currentMode = gameModeRef.current
     if (gameStateRef.current !== 'playing') return false
-    if (!targetSquare) return false
+    if (!targetSquare || sourceSquare === targetSquare) return false
+    if (currentMode === 'speed-pair' && (speedPair.resigning || speedPair.canRetryResignation))
+      return false
 
     const isOpponentTurn =
       (currentMode === 'computer' &&
@@ -536,7 +555,10 @@ export default function App() {
       if (!piece) return false
       const isMyPiece = (piece.color === 'w') === (playerColor === 'white')
       if (!isMyPiece) return false
-      setPremove({ from: sourceSquare, to: targetSquare })
+      premoveRef.current = { from: sourceSquare, to: targetSquare }
+      setPremove(premoveRef.current)
+      setSelectedSquare(null)
+      setLegalMoveSquares(new Set())
       return false
     }
 
@@ -644,6 +666,11 @@ export default function App() {
 
   function onSquareClick({ square }: { piece: unknown; square: string }) {
     if (gameStateRef.current !== 'playing') return
+    if (
+      gameModeRef.current === 'speed-pair' &&
+      (speedPair.resigning || speedPair.canRetryResignation)
+    )
+      return
 
     const currentGame = gameRef.current
     const currentMode = gameModeRef.current
@@ -660,12 +687,15 @@ export default function App() {
       const isMyPiece = piece && (piece.color === 'w') === (playerColor === 'white')
       if (selectedSquare && !isMyPiece) {
         // Second click: save premove
-        setPremove({ from: selectedSquare, to: square })
+        premoveRef.current = { from: selectedSquare, to: square }
+        setPremove(premoveRef.current)
         setSelectedSquare(null)
         setLegalMoveSquares(new Set())
       } else if (isMyPiece) {
         // First click or re-select: pick piece
-        setSelectedSquare(square)
+        premoveRef.current = null
+        setPremove(null)
+        setSelectedSquare(selectedSquare === square ? null : square)
         setLegalMoveSquares(new Set())
       } else {
         setSelectedSquare(null)
@@ -783,7 +813,8 @@ export default function App() {
   const saveRef = useRef<() => void>(() => {})
   useEffect(() => {
     const save = () => {
-      if (['idle', 'matching'].includes(gameState)) return
+      if (['idle', 'matching'].includes(gameState) || renderedLibraryOwner !== progressOwner())
+        return
       try {
         saveGame(savedSnapshot())
         setStorageError('')
@@ -798,7 +829,7 @@ export default function App() {
       save()
       lastSave.current = Date.now()
     }
-  }, [gameState, savedSnapshot])
+  }, [gameState, savedSnapshot, renderedLibraryOwner])
   useEffect(() => {
     const save = () => saveRef.current()
     window.addEventListener('pagehide', save)
@@ -876,7 +907,7 @@ export default function App() {
     resetGame()
   }
 
-  function resetGame() {
+  function resetGame(clearSaved = true) {
     setConfirmingResignation(false)
     clearOwnArrows()
     requestedOwnFen.current = null
@@ -885,7 +916,7 @@ export default function App() {
     analysisGeneration.current++
     computerGeneration.current++
     try {
-      clearActive()
+      if (clearSaved) clearActive()
     } catch {
       /* storage error is shown above */
     }
@@ -927,6 +958,10 @@ export default function App() {
   async function resign() {
     if (gameStateRef.current !== 'playing') return
     setConfirmingResignation(false)
+    premoveRef.current = null
+    setPremove(null)
+    setSelectedSquare(null)
+    setLegalMoveSquares(new Set())
     if (gameMode === 'speed-pair') {
       await speedPair.resignGame()
       return
@@ -1032,605 +1067,771 @@ export default function App() {
     : null
 
   return (
-    <div className="app-bg min-h-screen flex items-start justify-center p-3 lg:p-8">
-      <div className="flex flex-col lg:flex-row gap-5 lg:gap-8 w-full max-w-6xl">
-        {/* Board column */}
-        <div
-          className="flex flex-col gap-2.5 lg:shrink-0"
-          style={{ width: boardSize <= 500 ? '100%' : 660 }}
-        >
-          <div className="relative z-40 flex items-center justify-between mb-1">
-            <a
-              href="/"
-              aria-label="Evaluchess home"
-              className="flex items-center gap-3 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-400"
-            >
-              <div className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-indigo-500 to-fuchsia-500 shadow-lg shadow-indigo-900/50 ring-1 ring-white/15">
-                <span className="text-xl leading-none text-white drop-shadow-sm">♞</span>
-              </div>
-              <div className="leading-tight">
-                <h1 className="text-xl font-bold tracking-tight gradient-text">Evaluchess</h1>
-                <p className="text-[11px] font-medium text-gray-500 tracking-wide">
-                  Play · Analyze · Improve
-                </p>
-              </div>
-            </a>
-            <UserBadge auth={auth} onlineCount={onlineCount} onOpenAuth={(m) => setAuthModal(m)}>
-              <GameSettings settings={settings} onChange={updateSettings} />
-            </UserBadge>
+    <div className="app-bg app-shell">
+      <header className="app-header">
+        <a href="/" aria-label="Evaluchess home" className="brand-link">
+          <span className="brand-emblem">
+            <Icon name="knight" size={25} />
+          </span>
+          <div className="brand-type">
+            <h1>
+              Evalu<span>chess</span>
+            </h1>
+            <small>MAKE YOUR NEXT MOVE BETTER.</small>
           </div>
-
-          {/* Opponent clock (top) */}
-          {(() => {
-            const opponent = playerColor === 'white' ? 'black' : 'white'
-            const oppTimeMs = opponent === 'white' ? clock.timeWhite : clock.timeBlack
-            const oppActive = clock.activeColor === opponent && isPlaying
-            const oppFlagged = clock.flagged === opponent
-            return (
-              <div
-                className={`w-full flex items-center justify-between rounded-2xl px-4 py-3 transition-all duration-200 ${
-                  oppActive ? 'glass glow-active' : 'glass-subtle'
-                }`}
-              >
-                <div className="flex items-center gap-3">
+        </a>
+        <div className="header-motto">
+          <span className="status-dot" /> Play with purpose.
+        </div>
+        <UserBadge auth={auth} onlineCount={onlineCount} onOpenAuth={(m) => setAuthModal(m)}>
+          <GameSettings settings={settings} onChange={updateSettings} />
+        </UserBadge>
+      </header>
+      <main className="game-layout" aria-label={practice ? 'Position practice' : undefined}>
+        {practice ? (
+          <MistakePractice
+            settings={settings}
+            boardSize={boardSize}
+            key={practice.game.id + ':' + practice.ply}
+            game={practice.game}
+            ply={practice.ply}
+            returnLabel={gameState === 'analyzed' ? 'Back to review' : 'Back to menu'}
+            onClose={() => setPractice(null)}
+          />
+        ) : (
+          <>
+            {/* Board column */}
+            <div
+              className="board-column"
+              style={{ width: boardSize <= 500 ? '100%' : boardSize + 40 }}
+            >
+              {/* Opponent clock (top) */}
+              {(() => {
+                const opponent = playerColor === 'white' ? 'black' : 'white'
+                const oppTimeMs = opponent === 'white' ? clock.timeWhite : clock.timeBlack
+                const oppActive = clock.activeColor === opponent && isPlaying
+                const oppFlagged = clock.flagged === opponent
+                return (
                   <div
-                    className={`w-4 h-4 rounded-full shrink-0 ${opponent === 'white' ? 'bg-white shadow-[0_0_12px_rgba(255,255,255,0.35)]' : 'bg-gray-900 border-2 border-gray-500'}`}
+                    className={`player-strip w-full flex items-center justify-between rounded-2xl px-4 py-3 transition-all duration-200 ${
+                      oppActive ? 'glass glow-active' : 'glass-subtle'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-4 h-4 rounded-full shrink-0 ${opponent === 'white' ? 'bg-white shadow-[0_0_12px_rgba(255,255,255,0.35)]' : 'bg-gray-900 border-2 border-gray-500'}`}
+                      />
+                      {(() => {
+                        const oppName = speedPair.match?.opponentUsername
+                        const oppElo = speedPair.match?.opponentElo
+                        return (
+                          <div className="flex items-center gap-2.5">
+                            <span
+                              className={`text-base font-semibold tracking-tight ${oppActive ? 'text-white' : 'text-gray-300'}`}
+                            >
+                              {gameMode === 'computer'
+                                ? `Computer · ${DIFFICULTIES[selectedDifficulty].label}`
+                                : oppName
+                                  ? oppName
+                                  : opponent === 'white'
+                                    ? 'White'
+                                    : 'Black'}
+                            </span>
+                            {gameMode === 'speed-pair' && typeof oppElo === 'number' && (
+                              <>
+                                <span className="w-px h-4 bg-white/15" />
+                                <span className="text-sm font-mono font-semibold text-indigo-300 tabular-nums">
+                                  {oppElo}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        )
+                      })()}
+                      {computerThinking && (
+                        <span className="flex items-center gap-1.5 text-xs text-indigo-300 font-medium">
+                          <span className="flex gap-0.5">
+                            <span
+                              className="w-1 h-1 bg-indigo-400 rounded-full dot-pulse"
+                              style={{ animationDelay: '0ms' }}
+                            />
+                            <span
+                              className="w-1 h-1 bg-indigo-400 rounded-full dot-pulse"
+                              style={{ animationDelay: '180ms' }}
+                            />
+                            <span
+                              className="w-1 h-1 bg-indigo-400 rounded-full dot-pulse"
+                              style={{ animationDelay: '360ms' }}
+                            />
+                          </span>
+                          thinking
+                        </span>
+                      )}
+                    </div>
+                    {clockEnabled && (
+                      <ClockDisplay
+                        timeMs={oppTimeMs}
+                        isActive={oppActive}
+                        isFlagged={oppFlagged}
+                        color={opponent}
+                      />
+                    )}
+                  </div>
+                )
+              })()}
+
+              {/* Board + eval bar */}
+              <div className="flex gap-2 items-stretch">
+                <EvalBar ev={liveEval} height={boardSize} />
+                <div
+                  className="board-frame relative overflow-hidden"
+                  style={{
+                    width: boardSize,
+                    height: boardSize,
+                    boxShadow:
+                      '0 24px 60px -25px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <Chessboard
+                    key={reviewMoveIndex !== null ? `review-${reviewMoveIndex}` : 'game'}
+                    options={{
+                      position: displayFen,
+                      boardOrientation: playerColor,
+                      onPieceDrop: isPlaying ? onDrop : undefined,
+                      onSquareClick: isPlaying ? onSquareClick : undefined,
+                      onSquareMouseDown: isPlaying
+                        ? (_, event) => {
+                            if (event.button !== 2) return
+                            premoveRef.current = null
+                            setPremove(null)
+                            setSelectedSquare(null)
+                            setLegalMoveSquares(new Set())
+                          }
+                        : undefined,
+                      dragActivationDistance: 8,
+                      canDragPiece: ({ piece }) => piece.pieceType[0] === playerColor[0],
+                      squareStyles,
+                      boardStyle: { borderRadius: '4px' },
+                      ...boardAppearance(settings),
+                      allowDragging:
+                        isPlaying && (settings.premoves || game.turn() === playerColor[0]),
+                      showAnimations: false,
+                    }}
                   />
-                  {(() => {
-                    const oppName = speedPair.match?.opponentUsername
-                    const oppElo = speedPair.match?.opponentElo
-                    return (
+                  <MoveArrows
+                    key={
+                      isPlaying
+                        ? `arrows-live-${ownArrows?.id}`
+                        : `arrows-review-${reviewMoveIndex}`
+                    }
+                    arrows={boardArrows}
+                    orientation={playerColor}
+                    fade={isPlaying}
+                  />
+                </div>
+              </div>
+
+              {/* Player move classification (above player clock) */}
+              <div className="h-8 flex items-center justify-center">
+                {isPlaying && liveClassification && (
+                  <span
+                    data-testid="live-move-classification"
+                    style={{ color: liveClassification.color }}
+                    className="text-2xl font-bold tracking-wide [text-shadow:0_2px_12px_rgba(0,0,0,0.85)]"
+                  >
+                    {liveClassification.label}
+                  </span>
+                )}
+              </div>
+
+              {/* Player clock (bottom) */}
+              {(() => {
+                const playerTimeMs = playerColor === 'white' ? clock.timeWhite : clock.timeBlack
+                const playerActive = clock.activeColor === playerColor && isPlaying
+                const playerFlagged = clock.flagged === playerColor
+                return (
+                  <div
+                    className={`player-strip w-full flex items-center justify-between rounded-2xl px-4 py-3 transition-all duration-200 ${
+                      playerActive ? 'glass glow-active' : 'glass-subtle'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-4 h-4 rounded-full shrink-0 ${playerColor === 'white' ? 'bg-white shadow-[0_0_12px_rgba(255,255,255,0.35)]' : 'bg-gray-900 border-2 border-gray-500'}`}
+                      />
                       <div className="flex items-center gap-2.5">
                         <span
-                          className={`text-base font-semibold tracking-tight ${oppActive ? 'text-white' : 'text-gray-300'}`}
+                          className={`text-base font-semibold tracking-tight ${playerActive ? 'text-white' : 'text-gray-300'}`}
                         >
-                          {gameMode === 'computer'
-                            ? `Computer · ${DIFFICULTIES[selectedDifficulty].label}`
-                            : oppName
-                              ? oppName
-                              : opponent === 'white'
+                          {gameMode === 'speed-pair' && auth.profile
+                            ? auth.profile.username
+                            : gameMode === 'computer'
+                              ? 'You'
+                              : playerColor === 'white'
                                 ? 'White'
                                 : 'Black'}
                         </span>
-                        {gameMode === 'speed-pair' && speedPair.match?.opponentBot && (
-                          <span className="text-xs text-gray-400">Bot</span>
-                        )}
-                        {gameMode === 'speed-pair' && typeof oppElo === 'number' && (
+                        {gameMode === 'speed-pair' && auth.profile && (
                           <>
                             <span className="w-px h-4 bg-white/15" />
                             <span className="text-sm font-mono font-semibold text-indigo-300 tabular-nums">
-                              {oppElo}
+                              {auth.profile.elo}
                             </span>
                           </>
                         )}
                       </div>
-                    )
-                  })()}
-                  {computerThinking && (
-                    <span className="flex items-center gap-1.5 text-xs text-indigo-300 font-medium">
-                      <span className="flex gap-0.5">
-                        <span
-                          className="w-1 h-1 bg-indigo-400 rounded-full dot-pulse"
-                          style={{ animationDelay: '0ms' }}
-                        />
-                        <span
-                          className="w-1 h-1 bg-indigo-400 rounded-full dot-pulse"
-                          style={{ animationDelay: '180ms' }}
-                        />
-                        <span
-                          className="w-1 h-1 bg-indigo-400 rounded-full dot-pulse"
-                          style={{ animationDelay: '360ms' }}
-                        />
-                      </span>
-                      thinking
-                    </span>
-                  )}
-                </div>
-                {clockEnabled && (
-                  <ClockDisplay
-                    timeMs={oppTimeMs}
-                    isActive={oppActive}
-                    isFlagged={oppFlagged}
-                    color={opponent}
-                  />
-                )}
-              </div>
-            )
-          })()}
-
-          {/* Board + eval bar */}
-          <div className="flex gap-2 items-stretch">
-            <EvalBar ev={liveEval} height={boardSize} />
-            <div
-              className="relative rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10"
-              style={{
-                width: boardSize,
-                height: boardSize,
-                boxShadow:
-                  '0 40px 80px -30px rgba(99, 102, 241, 0.45), 0 0 0 1px rgba(255,255,255,0.08)',
-              }}
-            >
-              <Chessboard
-                key={reviewMoveIndex !== null ? `review-${reviewMoveIndex}` : 'game'}
-                options={{
-                  position: displayFen,
-                  boardOrientation: playerColor,
-                  onPieceDrop: isPlaying ? onDrop : undefined,
-                  onSquareClick: isPlaying ? onSquareClick : undefined,
-                  squareStyles,
-                  boardStyle: { borderRadius: '4px' },
-                  ...boardAppearance(settings),
-                  allowDragging: isPlaying && (settings.premoves || game.turn() === playerColor[0]),
-                  showAnimations: false,
-                }}
-              />
-              <MoveArrows
-                key={
-                  isPlaying ? `arrows-live-${ownArrows?.id}` : `arrows-review-${reviewMoveIndex}`
-                }
-                arrows={boardArrows}
-                orientation={playerColor}
-                fade={isPlaying}
-              />
+                    </div>
+                    {clockEnabled && (
+                      <ClockDisplay
+                        timeMs={playerTimeMs}
+                        isActive={playerActive}
+                        isFlagged={playerFlagged}
+                        color={playerColor}
+                      />
+                    )}
+                  </div>
+                )
+              })()}
             </div>
-          </div>
 
-          {/* Player move classification (above player clock) */}
-          <div className="h-8 flex items-center justify-center">
-            {isPlaying && liveClassification && (
-              <span
-                data-testid="live-move-classification"
-                style={{ color: liveClassification.color }}
-                className="text-2xl font-bold tracking-wide [text-shadow:0_2px_12px_rgba(0,0,0,0.85)]"
-              >
-                {liveClassification.label}
-              </span>
-            )}
-          </div>
-
-          {/* Player clock (bottom) */}
-          {(() => {
-            const playerTimeMs = playerColor === 'white' ? clock.timeWhite : clock.timeBlack
-            const playerActive = clock.activeColor === playerColor && isPlaying
-            const playerFlagged = clock.flagged === playerColor
-            return (
-              <div
-                className={`w-full flex items-center justify-between rounded-2xl px-4 py-3 transition-all duration-200 ${
-                  playerActive ? 'glass glow-active' : 'glass-subtle'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`w-4 h-4 rounded-full shrink-0 ${playerColor === 'white' ? 'bg-white shadow-[0_0_12px_rgba(255,255,255,0.35)]' : 'bg-gray-900 border-2 border-gray-500'}`}
-                  />
-                  <div className="flex items-center gap-2.5">
-                    <span
-                      className={`text-base font-semibold tracking-tight ${playerActive ? 'text-white' : 'text-gray-300'}`}
-                    >
-                      {gameMode === 'speed-pair' && auth.profile
-                        ? auth.profile.username
-                        : gameMode === 'computer'
-                          ? 'You'
-                          : playerColor === 'white'
-                            ? 'White'
-                            : 'Black'}
-                    </span>
-                    {gameMode === 'speed-pair' && auth.profile && (
+            {/* Side panel — on mobile, float above the board while the game hasn't started
+            so users don't see an un-interactable board before the configurator. */}
+            <div
+              className={`side-panel w-full lg:flex-1 lg:min-w-64 flex flex-col gap-4 ${
+                gameState === 'idle' || gameState === 'matching' ? 'order-first lg:order-none' : ''
+              }`}
+            >
+              {/* Lobby and training progress */}
+              {gameState === 'idle' && (
+                <div className="lobby-panel flex flex-col gap-5">
+                  {/* Mode / view selector */}
+                  <nav
+                    aria-label="Game modes and activity"
+                    className="lobby-nav grid grid-cols-2 gap-1.5"
+                  >
+                    {(
+                      ['speed-pair', 'computer', 'leaderboard', 'library', 'progress'] as const
+                    ).map((view) => {
+                      const active = menuView === view
+                      return (
+                        <button
+                          key={view}
+                          onClick={() => {
+                            setMenuView(view)
+                            if (view === 'speed-pair' || view === 'computer') setGameMode(view)
+                          }}
+                          aria-pressed={active}
+                          className={`${view === 'progress' ? 'progress-tab' : ''} lobby-tab min-w-0 min-h-11 px-3 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+                            active
+                              ? 'is-active'
+                              : 'text-gray-400 hover:text-gray-100 hover:bg-white/5'
+                          }`}
+                        >
+                          <Icon
+                            name={
+                              view === 'speed-pair'
+                                ? 'bolt'
+                                : view === 'computer'
+                                  ? 'knight'
+                                  : view === 'leaderboard'
+                                    ? 'trophy'
+                                    : 'book'
+                            }
+                            size={17}
+                          />
+                          {view === 'computer' ? (
+                            'Computer'
+                          ) : view === 'leaderboard' ? (
+                            'Leaderboard'
+                          ) : view === 'progress' ? (
+                            'My progress'
+                          ) : view === 'library' ? (
+                            'My games'
+                          ) : (
+                            <span className="flex items-center justify-center gap-2">
+                              Speed Pair
+                              <span
+                                aria-label={`${onlineCount} players online`}
+                                className={`shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${active ? 'bg-white/20 text-white' : 'bg-white/5 text-gray-400'}`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+                                {onlineCount}
+                              </span>
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </nav>
+                  <div className="account-sync text-xs text-gray-400" role="status">
+                    {auth.user ? (
                       <>
-                        <span className="w-px h-4 bg-white/15" />
-                        <span className="text-sm font-mono font-semibold text-indigo-300 tabular-nums">
-                          {auth.profile.elo}
-                        </span>
+                        {accountProgress.status === 'synced'
+                          ? 'Saved to your account'
+                          : accountProgress.status === 'error'
+                            ? accountProgress.error
+                            : 'Syncing your progress…'}
+                        {accountProgress.status === 'error' && (
+                          <button
+                            onClick={accountProgress.retry}
+                            className="ml-2 accent-text underline"
+                          >
+                            Retry sync
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <span>Progress is saved on this device.</span>{' '}
+                        <button
+                          className="accent-text underline"
+                          onClick={() => setAuthModal('signin')}
+                        >
+                          Sign in to sync
+                        </button>
                       </>
                     )}
                   </div>
-                </div>
-                {clockEnabled && (
-                  <ClockDisplay
-                    timeMs={playerTimeMs}
-                    isActive={playerActive}
-                    isFlagged={playerFlagged}
-                    color={playerColor}
-                  />
-                )}
-              </div>
-            )
-          })()}
-        </div>
 
-        {/* Side panel — on mobile, float above the board while the game hasn't started
-            so users don't see an un-interactable board before the configurator. */}
-        <div
-          className={`w-full lg:flex-1 lg:min-w-64 flex flex-col gap-4 ${
-            gameState === 'idle' || gameState === 'matching' ? 'order-first lg:order-none' : ''
-          }`}
-        >
-          {/* Configurator — idle only. Always stretch the panel to match the
-              board column's height on desktop. The Start Game button anchors to
-              the bottom via mt-auto so the form feels grounded. */}
-          {gameState === 'idle' && (
-            <div className="glass rounded-2xl p-5 flex flex-col gap-5 lg:flex-1">
-              {/* Mode / view selector */}
-              <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-black/20 p-1.5 ring-1 ring-white/5">
-                {(['speed-pair', 'computer', 'leaderboard', 'library'] as const).map((view) => {
-                  const active = menuView === view
-                  return (
-                    <button
-                      key={view}
-                      onClick={() => {
-                        setMenuView(view)
-                        if (view === 'speed-pair' || view === 'computer') setGameMode(view)
-                      }}
-                      aria-pressed={active}
-                      className={`min-w-0 min-h-11 px-3 py-2.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 ${
-                        active
-                          ? 'bg-indigo-500/20 text-indigo-100 ring-1 ring-inset ring-indigo-400/40'
-                          : 'text-gray-400 hover:text-gray-100 hover:bg-white/5'
-                      }`}
-                    >
-                      {view === 'computer' ? (
-                        'Computer'
-                      ) : view === 'leaderboard' ? (
-                        'Leaderboard'
-                      ) : view === 'library' ? (
-                        'My games'
-                      ) : (
-                        <span className="flex items-center justify-center gap-2">
-                          Speed Pair
-                          <span
-                            aria-label={`${onlineCount} players online`}
-                            className={`shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${active ? 'bg-white/20 text-white' : 'bg-white/5 text-gray-400'}`}
-                          >
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
-                            {onlineCount}
-                          </span>
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-
-              {menuView === 'leaderboard' && <Leaderboard />}
-
-              {menuView === 'library' && (
-                <GameLibrary
-                  onOpen={openSaved}
-                  onPractice={(game, ply) => setPractice({ game, ply })}
-                />
-              )}
-              {savedActive && menuView !== 'library' && (
-                <button
-                  className="rounded-xl p-3 bg-white/10 text-left"
-                  onClick={() => openSaved(savedActive)}
-                >
-                  Resume your saved{' '}
-                  {savedActive.mode === 'computer' ? 'computer game' : 'online game'}
-                </button>
-              )}
-              {!['leaderboard', 'library'].includes(menuView) && (
-                <>
-                  {/* Difficulty selector — computer mode only */}
-                  {gameMode === 'computer' && (
-                    <div>
-                      <div className="text-gray-500 text-[11px] font-semibold uppercase tracking-[0.12em] mb-2.5">
-                        Computer Difficulty
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {DIFFICULTIES.map((d, i) => (
-                          <button
-                            key={d.label}
-                            onClick={() => setSelectedDifficulty(i)}
-                            className={`py-2.5 px-3 rounded-xl text-sm font-semibold transition-all text-left ring-1 ${
-                              selectedDifficulty === i
-                                ? 'bg-gradient-to-br from-indigo-500/90 to-fuchsia-500/90 text-white ring-white/20 shadow-md shadow-indigo-900/30'
-                                : 'bg-white/5 text-gray-200 ring-white/5 hover:bg-white/10 hover:ring-white/10'
-                            }`}
-                          >
-                            <div className="leading-tight">{d.label}</div>
-                            <div
-                              className={`text-[11px] font-mono mt-0.5 ${selectedDifficulty === i ? 'text-indigo-100/90' : 'text-gray-500'}`}
-                            >
-                              {d.description}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between gap-3 rounded-xl bg-white/5 px-4 py-3">
-                    <span className="text-lg font-mono font-semibold text-white">{tc.label}</span>
-                    <span className="text-xs text-gray-400">
-                      5 minutes per player · No increment
-                    </span>
-                  </div>
-
-                  {/* Color selector — computer mode only */}
-                  {gameMode === 'computer' && (
-                    <div>
-                      <div className="text-gray-500 text-[11px] font-semibold uppercase tracking-[0.12em] mb-2.5">
-                        Play as
-                      </div>
-                      <div className="flex gap-2">
-                        {(['white', 'black'] as const).map((c) => (
-                          <button
-                            key={c}
-                            onClick={() => setPlayerColor(c)}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all ring-1 ${
-                              playerColor === c
-                                ? 'bg-gradient-to-br from-indigo-500/90 to-fuchsia-500/90 text-white ring-white/20 shadow-md shadow-indigo-900/30'
-                                : 'bg-white/5 text-gray-200 ring-white/5 hover:bg-white/10 hover:ring-white/10'
-                            }`}
-                          >
-                            <div
-                              className={`w-3 h-3 rounded-full ${c === 'white' ? 'bg-white shadow-[0_0_8px_rgba(255,255,255,0.5)]' : 'bg-gray-900 border border-gray-400'}`}
-                            />
-                            <span className="capitalize">{c}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <button
-                    onClick={handleStartGame}
-                    className="btn-primary w-full py-3 rounded-xl text-sm tracking-tight"
-                  >
-                    Start Game
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Matchmaking panel */}
-          {gameState === 'matching' && (
-            <div className="glass rounded-2xl p-7 flex flex-col items-center gap-5 text-center">
-              <div className="relative w-16 h-16 flex items-center justify-center">
-                <div className="absolute inset-0 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 opacity-25 blur-xl animate-pulse" />
-                <div
-                  className="absolute inset-2 rounded-full border-2 border-indigo-400/30 border-t-indigo-400 animate-spin"
-                  style={{ animationDuration: '1.2s' }}
-                />
-                <div className="relative w-2 h-2 rounded-full bg-indigo-300 shadow-[0_0_10px_rgba(165,180,252,1)]" />
-              </div>
-              <div>
-                <div className="text-white font-semibold text-base mb-1.5 tracking-tight">
-                  Looking for an opponent…
-                </div>
-                <div className="flex items-center justify-center gap-1.5 text-sm text-gray-300 mb-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
-                  <span>
-                    {onlineCount} player{onlineCount !== 1 ? 's' : ''} online
-                  </span>
-                </div>
-              </div>
-              <button
-                onClick={async () => {
-                  if (await speedPair.leavePool()) setGameState('idle')
-                }}
-                className="text-sm text-gray-500 hover:text-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-
-          {storageError && (
-            <p role="alert" className="p-3 rounded bg-amber-950">
-              {storageError}
-            </p>
-          )}
-          {speedPair.error && gameMode === 'speed-pair' && (
-            <div role="alert" className="p-3 rounded bg-amber-950">
-              <p>{speedPair.error}</p>
-              {speedPair.canRetryMove && (
-                <button disabled={speedPair.sending} onClick={speedPair.retryMove}>
-                  Retry move
-                </button>
-              )}
-            </div>
-          )}
-          {liveEvalError && gameState === 'playing' && (
-            <div role="status" className="p-3 rounded bg-amber-950">
-              <p>Live evaluation unavailable.</p>
-              <button onClick={() => void evaluateCurrentPosition(game.fen())}>
-                Retry evaluation
-              </button>
-            </div>
-          )}
-          {engineError && gameState === 'playing' && (
-            <div role="alert" className="p-3 rounded bg-amber-950">
-              <p>{engineError}</p>
-              <button
-                onClick={() => {
-                  clock.sync(
-                    clock.timeWhite,
-                    clock.timeBlack,
-                    game.turn() === 'w' ? 'white' : 'black'
-                  )
-                  void triggerComputerMove(game.fen())
-                }}
-              >
-                Retry computer move
-              </button>
-            </div>
-          )}
-          {/* In-game panel */}
-          {gameState === 'playing' && (
-            <div className="glass rounded-2xl p-4 flex flex-col gap-3">
-              {gameMode === 'speed-pair' && speedPair.sending && (
-                <p role="status">Confirming move…</p>
-              )}
-              {!computerThinking && (
-                <div className="flex items-center gap-2.5 px-1">
                   <div
-                    className={`w-2.5 h-2.5 rounded-full ${game.turn() === 'w' ? 'bg-white shadow-[0_0_8px_rgba(255,255,255,0.5)]' : 'bg-gray-300'}`}
-                  />
-                  <span className="text-gray-200 text-sm font-semibold tracking-tight">
-                    {game.turn() === 'w' ? 'White to move' : 'Black to move'}
-                  </span>
-                </div>
-              )}
-              {confirmingResignation ? (
-                <div
-                  role="group"
-                  aria-label="Confirm resignation"
-                  className="space-y-3"
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape') setConfirmingResignation(false)
-                  }}
-                >
-                  <p className="text-sm text-gray-200">Resign this game? Your opponent will win.</p>
-                  <div className="flex gap-2">
-                    <button
-                      autoFocus
-                      onClick={() => setConfirmingResignation(false)}
-                      className="flex-1 rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold"
-                    >
-                      Keep playing
-                    </button>
-                    <button
-                      onClick={() => void resign()}
-                      className="flex-1 rounded-xl bg-red-900 px-3 py-2 text-sm font-semibold"
-                    >
-                      Resign game
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  onClick={() =>
-                    settings.confirmResignation ? setConfirmingResignation(true) : void resign()
-                  }
-                  className="w-full py-2.5 bg-white/5 hover:bg-white/10 ring-1 ring-white/10 text-gray-200 hover:text-white text-sm font-semibold rounded-xl transition-all"
-                >
-                  Resign / New Game
-                </button>
-              )}
-            </div>
-          )}
-
-          {gameState === 'analyzing' && (
-            <div className="glass rounded-2xl p-6 text-center">
-              <div className="text-white font-bold text-lg mb-1 tracking-tight">{gameOverMsg}</div>
-              <div className="text-gray-400 text-sm mb-5">Analyzing with Stockfish…</div>
-              <button className="px-3 py-2 rounded bg-white/10 mb-3" onClick={() => destroy()}>
-                Pause analysis
-              </button>
-              <div className="w-full bg-white/5 rounded-full h-1.5 mb-3 overflow-hidden ring-1 ring-white/5">
-                <div
-                  className="h-1.5 rounded-full transition-all duration-300 bg-gradient-to-r from-indigo-500 to-fuchsia-500 shadow-[0_0_10px_rgba(139,92,246,0.8)]"
-                  style={{
-                    width: analysisProgress.total
-                      ? `${(analysisProgress.current / analysisProgress.total) * 100}%`
-                      : '0%',
-                  }}
-                />
-              </div>
-              <div className="text-gray-500 text-xs font-mono">
-                {analysisProgress.current} / {analysisProgress.total} positions
-              </div>
-            </div>
-          )}
-
-          {gameState === 'analysis-error' && (
-            <div className="glass rounded-2xl p-4 space-y-3">
-              <p role="alert">{engineError}</p>
-              <button
-                className="btn-primary p-3 rounded-xl"
-                onClick={() =>
-                  void triggerAnalysis(fenHistoryRef.current, moveHistoryRef.current, playerColor)
-                }
-              >
-                Retry analysis
-              </button>
-              <button className="p-3" onClick={handleNewGame}>
-                Back to menu
-              </button>
-            </div>
-          )}
-          {gameState === 'analyzed' && analysisResult && (
-            <>
-              {gameOverMsg && (
-                <div className="glass rounded-2xl px-4 py-3 text-center">
-                  <span className="text-white font-bold text-base tracking-tight">
-                    {gameOverMsg}
-                  </span>
-                  {ratingChange && (
-                    <div className="mt-1.5 text-xs font-mono tabular-nums flex items-center justify-center gap-1.5">
-                      <span className="text-gray-500">Rating</span>
-                      <span
-                        className={`${ratingChange.delta > 0 ? 'text-emerald-300' : ratingChange.delta < 0 ? 'text-red-300' : 'text-gray-300'} font-semibold`}
-                      >
-                        {ratingChange.delta > 0 ? '+' : ''}
-                        {ratingChange.delta}
-                      </span>
-                      <span className="text-gray-500">→</span>
-                      <span className="text-indigo-300 font-semibold">{ratingChange.next}</span>
+                    className={`lobby-hero ${['speed-pair', 'leaderboard', 'progress'].includes(menuView) ? 'lobby-hero-compact' : ''}`}
+                  >
+                    <div className="hero-orbit" aria-hidden="true">
+                      <Icon
+                        name={
+                          menuView === 'leaderboard'
+                            ? 'trophy'
+                            : menuView === 'library'
+                              ? 'book'
+                              : 'knight'
+                        }
+                        size={76}
+                      />
                     </div>
+                    <span className="eyebrow accent-text">
+                      {menuView === 'progress'
+                        ? 'YOUR IMPROVEMENT'
+                        : menuView === 'speed-pair'
+                          ? 'THE ARENA'
+                          : menuView === 'computer'
+                            ? 'THE TRAINING LAB'
+                            : menuView === 'leaderboard'
+                              ? 'THE CONTENDERS'
+                              : 'YOUR PLAYBOOK'}
+                    </span>
+                    <h2>
+                      {menuView === 'progress' ? (
+                        'Your progress.'
+                      ) : menuView === 'speed-pair' ? (
+                        'Your next great move.'
+                      ) : menuView === 'computer' ? (
+                        <>
+                          Find your edge.
+                          <br />
+                          <em>Then sharpen it.</em>
+                        </>
+                      ) : menuView === 'leaderboard' ? (
+                        'Make your move up.'
+                      ) : (
+                        <>
+                          Every game.
+                          <br />
+                          <em>A little wiser.</em>
+                        </>
+                      )}
+                    </h2>
+                    <p>
+                      {menuView === 'progress'
+                        ? 'See what you’re learning, one game at a time.'
+                        : menuView === 'speed-pair'
+                          ? 'Find a rival. Trust your instincts. Learn something new.'
+                          : menuView === 'computer'
+                            ? 'Four levels of Stockfish. A challenge at your pace.'
+                            : menuView === 'leaderboard'
+                              ? 'The last 24 hours. Ranked by wins. Your next one counts.'
+                              : 'Revisit the turning points. Turn mistakes into muscle memory.'}
+                    </p>
+                  </div>
+                  {menuView === 'leaderboard' && <Leaderboard />}
+
+                  {menuView === 'progress' && (
+                    <PersonalProgress games={readLibrary().games} onOpen={openSaved} />
+                  )}
+                  {menuView === 'library' && (
+                    <GameLibrary
+                      onOpen={openSaved}
+                      onPractice={(game, ply) => setPractice({ game, ply })}
+                    />
+                  )}
+                  {savedActive && !['library', 'progress'].includes(menuView) && (
+                    <button
+                      className="resume-card rounded-xl p-3 text-left"
+                      onClick={() => openSaved(savedActive)}
+                    >
+                      {savedActive.result ? 'Review' : 'Resume'} your saved{' '}
+                      {savedActive.mode === 'computer' ? 'computer game' : 'online game'}
+                    </button>
+                  )}
+                  {!['leaderboard', 'library', 'progress'].includes(menuView) && (
+                    <>
+                      {/* Difficulty selector — computer mode only */}
+                      {gameMode === 'computer' && (
+                        <div>
+                          <div className="text-gray-500 text-[11px] font-semibold uppercase tracking-[0.12em] mb-2.5">
+                            Computer Difficulty
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            {DIFFICULTIES.map((d, i) => (
+                              <button
+                                key={d.label}
+                                onClick={() => setSelectedDifficulty(i)}
+                                className={`py-2.5 px-3 rounded-xl text-sm font-semibold transition-all text-left ring-1 ${
+                                  selectedDifficulty === i
+                                    ? 'selected-option'
+                                    : 'bg-white/5 text-gray-200 ring-white/5 hover:bg-white/10 hover:ring-white/10'
+                                }`}
+                              >
+                                <div className="leading-tight">{d.label}</div>
+                                <div
+                                  className={`text-[11px] font-mono mt-0.5 ${selectedDifficulty === i ? 'text-indigo-100/90' : 'text-gray-500'}`}
+                                >
+                                  {d.description}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="time-control flex items-center justify-between gap-3 rounded-xl px-4 py-3">
+                        <span className="time-control-value">
+                          <Icon name="bolt" size={22} />
+                          {tc.label}
+                          <small>BLITZ</small>
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          5 minutes per player · No increment
+                        </span>
+                      </div>
+
+                      {/* Color selector — computer mode only */}
+                      {gameMode === 'computer' && (
+                        <div>
+                          <div className="text-gray-500 text-[11px] font-semibold uppercase tracking-[0.12em] mb-2.5">
+                            Play as
+                          </div>
+                          <div className="flex gap-2">
+                            {(['white', 'black'] as const).map((c) => (
+                              <button
+                                key={c}
+                                onClick={() => setPlayerColor(c)}
+                                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all ring-1 ${
+                                  playerColor === c
+                                    ? 'selected-option'
+                                    : 'bg-white/5 text-gray-200 ring-white/5 hover:bg-white/10 hover:ring-white/10'
+                                }`}
+                              >
+                                <div
+                                  className={`w-3 h-3 rounded-full ${c === 'white' ? 'bg-white shadow-[0_0_8px_rgba(255,255,255,0.5)]' : 'bg-gray-900 border border-gray-400'}`}
+                                />
+                                <span className="capitalize">{c}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={handleStartGame}
+                        className="btn-primary start-game w-full py-3 rounded-xl text-sm tracking-tight"
+                      >
+                        <span>Start Game</span>
+                        <Icon name="arrow" />
+                      </button>
+                    </>
+                  )}
+                  {!['leaderboard', 'library'].includes(menuView) && (
+                    <TrainingProgress
+                      key={practice ? 'practicing' : 'lobby'}
+                      onPractice={(game, ply) => setPractice({ game, ply })}
+                    />
                   )}
                 </div>
               )}
-              <div className="rounded-2xl p-4 flex gap-3 items-start bg-gradient-to-br from-indigo-500/10 to-fuchsia-500/10 ring-1 ring-indigo-400/20 backdrop-blur">
-                <span className="text-indigo-300 text-base mt-0.5 shrink-0">💡</span>
-                <p className="text-sm text-indigo-100/90 leading-relaxed">
-                  {analysisResult.moves.some(
-                    (m) =>
-                      m.player === playerColor && ['mistake', 'blunder'].includes(m.classification)
-                  )
-                    ? 'Try your mistake again before revealing the engine’s answer.'
-                    : 'No mistakes or blunders found in your moves. Select any move to explore the engine recommendation.'}
-                </p>
-              </div>
-              {practicePly !== null && (
-                <>
+
+              {/* Matchmaking panel */}
+              {gameState === 'matching' && (
+                <div className="matching-card glass rounded-2xl p-7 flex flex-col items-center gap-5 text-center">
+                  <span className="eyebrow accent-text">ENTERING THE ARENA</span>
+                  <div className="relative w-16 h-16 flex items-center justify-center">
+                    <div className="absolute inset-0 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 opacity-25 blur-xl animate-pulse" />
+                    <div
+                      className="absolute inset-2 rounded-full border-2 border-indigo-400/30 border-t-indigo-400 animate-spin"
+                      style={{ animationDuration: '1.2s' }}
+                    />
+                    <div className="relative w-2 h-2 rounded-full bg-indigo-300 shadow-[0_0_10px_rgba(165,180,252,1)]" />
+                  </div>
+                  <div>
+                    <div className="text-white font-semibold text-base mb-1.5 tracking-tight">
+                      Looking for an opponent…
+                    </div>
+                    <div className="flex items-center justify-center gap-1.5 text-sm text-gray-300 mb-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+                      <span>
+                        {onlineCount} player{onlineCount !== 1 ? 's' : ''} online
+                      </span>
+                    </div>
+                  </div>
                   <button
-                    className="btn-primary p-3 rounded-xl"
+                    onClick={async () => {
+                      if (await speedPair.leavePool()) setGameState('idle')
+                    }}
+                    className="text-sm text-gray-500 hover:text-gray-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              {storageError && (
+                <p role="alert" className="p-3 rounded bg-amber-950">
+                  {storageError}
+                </p>
+              )}
+              {speedPair.error && gameMode === 'speed-pair' && (
+                <div role="alert" className="p-3 rounded bg-amber-950">
+                  <p>{speedPair.error}</p>
+                  {speedPair.canRetryMove && (
+                    <button disabled={speedPair.sending} onClick={speedPair.retryMove}>
+                      Retry move
+                    </button>
+                  )}
+                  {speedPair.canRetryResignation && (
+                    <button disabled={speedPair.sending} onClick={() => void resign()}>
+                      Retry resignation
+                    </button>
+                  )}
+                </div>
+              )}
+              {liveEvalError && gameState === 'playing' && (
+                <div role="status" className="p-3 rounded bg-amber-950">
+                  <p>Live evaluation unavailable.</p>
+                  <button onClick={() => void evaluateCurrentPosition(game.fen())}>
+                    Retry evaluation
+                  </button>
+                </div>
+              )}
+              {engineError && gameState === 'playing' && (
+                <div role="alert" className="p-3 rounded bg-amber-950">
+                  <p>{engineError}</p>
+                  <button
                     onClick={() => {
-                      setShowReviewAnswer(false)
-                      setPractice({ game: savedSnapshot(), ply: practicePly })
+                      clock.sync(
+                        clock.timeWhite,
+                        clock.timeBlack,
+                        game.turn() === 'w' ? 'white' : 'black'
+                      )
+                      void triggerComputerMove(game.fen())
                     }}
                   >
-                    Try this position again
+                    Retry computer move
                   </button>
+                </div>
+              )}
+              {/* In-game panel */}
+              {gameState === 'playing' && (
+                <div className="live-panel glass rounded-2xl p-4 flex flex-col gap-3">
+                  <div className="section-heading">
+                    <span className="eyebrow">
+                      <span className="status-dot" /> GAME ON
+                    </span>
+                    <span className="live-format">5+0 BLITZ</span>
+                  </div>
+                  {gameMode === 'speed-pair' && speedPair.sending && (
+                    <p role="status">
+                      {speedPair.resigning ? 'Confirming resignation…' : 'Confirming move…'}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-2.5 px-1">
+                    <div
+                      className={`w-2.5 h-2.5 rounded-full ${game.turn() === 'w' ? 'bg-white shadow-[0_0_8px_rgba(255,255,255,0.5)]' : 'bg-gray-300'}`}
+                    />
+                    <span className="text-gray-200 text-sm font-semibold tracking-tight">
+                      {game.turn() === 'w' ? 'White to move' : 'Black to move'}
+                    </span>
+                  </div>
+                  {confirmingResignation ? (
+                    <div
+                      role="group"
+                      aria-label="Confirm resignation"
+                      className="space-y-3"
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape') setConfirmingResignation(false)
+                      }}
+                    >
+                      <p className="text-sm text-gray-200">
+                        Resign this game? Your opponent will win.
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          autoFocus
+                          onClick={() => setConfirmingResignation(false)}
+                          className="flex-1 rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold"
+                        >
+                          Keep playing
+                        </button>
+                        <button
+                          disabled={gameMode === 'speed-pair' && speedPair.sending}
+                          onClick={() => void resign()}
+                          className="flex-1 rounded-xl bg-red-900 px-3 py-2 text-sm font-semibold"
+                        >
+                          Resign game
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      disabled={gameMode === 'speed-pair' && speedPair.sending}
+                      onClick={() =>
+                        settings.confirmResignation ? setConfirmingResignation(true) : void resign()
+                      }
+                      className="w-full py-2.5 bg-white/5 hover:bg-white/10 ring-1 ring-white/10 text-gray-200 hover:text-white text-sm font-semibold rounded-xl transition-all"
+                    >
+                      Resign / New Game
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {gameState === 'analyzing' && (
+                <div className="glass rounded-2xl p-6 text-center">
+                  <div className="text-white font-bold text-lg mb-1 tracking-tight">
+                    {gameOverMsg}
+                  </div>
+                  <div className="text-gray-400 text-sm mb-5">Analyzing with Stockfish…</div>
+                  <button className="px-3 py-2 rounded bg-white/10 mb-3" onClick={() => destroy()}>
+                    Pause analysis
+                  </button>
+                  <div className="w-full bg-white/5 rounded-full h-1.5 mb-3 overflow-hidden ring-1 ring-white/5">
+                    <div
+                      className="h-1.5 rounded-full transition-all duration-300 bg-gradient-to-r from-indigo-500 to-fuchsia-500 shadow-[0_0_10px_rgba(139,92,246,0.8)]"
+                      style={{
+                        width: analysisProgress.total
+                          ? `${(analysisProgress.current / analysisProgress.total) * 100}%`
+                          : '0%',
+                      }}
+                    />
+                  </div>
+                  <div className="text-gray-500 text-xs font-mono">
+                    {analysisProgress.current} / {analysisProgress.total} positions
+                  </div>
+                </div>
+              )}
+
+              {gameState === 'analysis-error' && (
+                <div className="glass rounded-2xl p-4 space-y-3">
+                  <p role="alert">{engineError}</p>
                   <button
-                    className="text-sm text-gray-400 hover:text-white self-center px-3 py-1"
-                    aria-pressed={showReviewAnswer}
-                    onClick={() => setShowReviewAnswer((shown) => !shown)}
+                    className="btn-primary p-3 rounded-xl"
+                    onClick={() =>
+                      void triggerAnalysis(
+                        fenHistoryRef.current,
+                        moveHistoryRef.current,
+                        playerColor
+                      )
+                    }
                   >
-                    {showReviewAnswer ? 'Hide answer' : 'Show answer'}
+                    Retry analysis
                   </button>
+                  <button className="p-3" onClick={handleNewGame}>
+                    Back to menu
+                  </button>
+                </div>
+              )}
+              {gameState === 'analyzed' && analysisResult && (
+                <>
+                  {gameOverMsg && (
+                    <div className="result-card glass rounded-2xl px-4 py-3 text-center">
+                      <span className="result-icon">
+                        <Icon name="trophy" size={27} />
+                      </span>
+                      <span className="eyebrow">GAME COMPLETE</span>
+                      <span className="text-white font-bold text-base tracking-tight">
+                        {gameOverMsg}
+                      </span>
+                      {ratingChange && (
+                        <div className="mt-1.5 text-xs font-mono tabular-nums flex items-center justify-center gap-1.5">
+                          <span className="text-gray-500">Rating</span>
+                          <span
+                            className={`${ratingChange.delta > 0 ? 'text-emerald-300' : ratingChange.delta < 0 ? 'text-red-300' : 'text-gray-300'} font-semibold`}
+                          >
+                            {ratingChange.delta > 0 ? '+' : ''}
+                            {ratingChange.delta}
+                          </span>
+                          <span className="text-gray-500">→</span>
+                          <span className="text-indigo-300 font-semibold">{ratingChange.next}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="coach-note rounded-2xl p-4 flex gap-3 items-start">
+                    <span className="accent-text mt-0.5">
+                      <Icon name="spark" size={20} />
+                    </span>
+                    <p className="text-sm text-gray-200 leading-relaxed">
+                      {analysisResult.moves.some(
+                        (m) =>
+                          m.player === playerColor &&
+                          ['mistake', 'blunder'].includes(m.classification)
+                      )
+                        ? 'Try your mistake again before revealing the engine’s answer.'
+                        : 'No mistakes or blunders found in your moves. Select any move to explore the engine recommendation.'}
+                    </p>
+                  </div>
+                  {practicePly !== null && (
+                    <>
+                      <button
+                        className="btn-primary p-3 rounded-xl"
+                        onClick={() => {
+                          setShowReviewAnswer(false)
+                          setPractice({ game: savedSnapshot(), ply: practicePly })
+                        }}
+                      >
+                        Try this position again
+                      </button>
+                      <button
+                        className="text-sm text-gray-400 hover:text-white self-center px-3 py-1"
+                        aria-pressed={showReviewAnswer}
+                        onClick={() => setShowReviewAnswer((shown) => !shown)}
+                      >
+                        {showReviewAnswer ? 'Hide answer' : 'Show answer'}
+                      </button>
+                    </>
+                  )}
+                  <Analysis
+                    key={sessionId}
+                    playerColor={playerColor}
+                    result={analysisResult}
+                    onPlayAgain={handlePlayAgain}
+                    onBackToMenu={handleNewGame}
+                    playAgainLabel={gameMode === 'speed-pair' ? 'New Opponent' : 'Play Again'}
+                    onMoveClick={(index) => {
+                      setShowReviewAnswer(false)
+                      setReviewMoveIndex(index)
+                    }}
+                    selectedMoveIndex={reviewMoveIndex}
+                  />
                 </>
               )}
-              <Analysis
-                key={sessionId}
-                playerColor={playerColor}
-                result={analysisResult}
-                onPlayAgain={handlePlayAgain}
-                onBackToMenu={handleNewGame}
-                playAgainLabel={gameMode === 'speed-pair' ? 'New Opponent' : 'Play Again'}
-                onMoveClick={(index) => {
-                  setShowReviewAnswer(false)
-                  setReviewMoveIndex(index)
-                }}
-                selectedMoveIndex={reviewMoveIndex}
-              />
-            </>
-          )}
-        </div>
-      </div>
+            </div>
+          </>
+        )}
+      </main>
+      <footer className="app-footer">
+        <span>EvaluChess / Play. Analyze. Improve.</span>
+        <span>One move closer.</span>
+      </footer>
 
-      {practice && (
-        <MistakePractice
-          settings={settings}
-          key={practice.game.id + ':' + practice.ply}
-          game={practice.game}
-          ply={practice.ply}
-          onClose={() => setPractice(null)}
-        />
-      )}
       {authModal && (
         <AuthModal auth={auth} onClose={() => setAuthModal(null)} initialMode={authModal} />
       )}

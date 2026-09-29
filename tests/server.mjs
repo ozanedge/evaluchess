@@ -70,7 +70,7 @@ export async function scratchServer() {
   }
   db.destroy()
   const routes = {}
-  for (const name of ['auth', 'join', 'move', 'status', 'leaderboard', 'rating', 'online'])
+  for (const name of ['auth', 'join', 'move', 'status', 'leaderboard', 'rating', 'online', 'library'])
     routes['/api/' + name] = (await import(`../.test-build/api/${name}.js`)).default
   const app = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost')

@@ -1,21 +1,15 @@
 import { Chess } from 'chess.js'
-import type { GameAnalysisResult } from '../utils/analysis'
-import type { SpeedPairMatch } from '../hooks/useSpeedPair'
-export interface SavedGame {
-  id: string
-  updatedAt: number
-  mode: 'computer' | 'speed-pair'
-  playerColor: 'white' | 'black'
-  moves: string[]
-  tc: number
-  difficulty: number
-  whiteMs: number
-  blackMs: number
-  result: string
-  analysis: GameAnalysisResult | null
-  match?: SpeedPairMatch
-  attempts?: Record<string, { tries: number; solved: boolean; lastAt: number }>
-}
+import { normalizeSavedGame, mergeSavedGame } from './savedGame'
+import {
+  progressKey,
+  progressOwner,
+  changeProgressOwner,
+  markProgressPending,
+  notifyProgress,
+} from './progressScope'
+import { rememberEarnedBadges } from './training'
+import type { SavedGame } from './savedGame'
+export type { SavedGame } from './savedGame'
 interface Library {
   version: 1
   games: SavedGame[]
@@ -76,7 +70,7 @@ function valid(value: unknown): value is SavedGame {
 }
 export function readLibrary(): Library {
   try {
-    const stored = JSON.parse(localStorage.getItem(KEY) || 'null')
+    const stored = JSON.parse(localStorage.getItem(progressKey(KEY)) || 'null')
     if (stored?.version !== 1 || !Array.isArray(stored.games)) return empty()
     return {
       version: 1,
@@ -90,15 +84,23 @@ export function readLibrary(): Library {
 export function saveGame(game: SavedGame, active = true) {
   const library = readLibrary()
   const previous = library.games.find((g) => g.id === game.id)
-  const saved = { ...game, attempts: previous?.attempts || game.attempts }
+  const saved = {
+    ...game,
+    attempts: previous?.attempts || game.attempts,
+    completedAt:
+      previous?.completedAt || game.completedAt || (game.result ? game.updatedAt : undefined),
+  }
+  rememberEarnedBadges([saved, ...library.games.filter((g) => g.id !== game.id)])
   library.games = [saved, ...library.games.filter((g) => g.id !== game.id)].slice(0, 50)
   if (active) library.active = saved
-  localStorage.setItem(KEY, JSON.stringify(library))
+  markProgressPending(saved.id)
+  localStorage.setItem(progressKey(KEY), JSON.stringify(library))
+  notifyProgress()
 }
 export function clearActive() {
   const library = readLibrary()
   library.active = null
-  localStorage.setItem(KEY, JSON.stringify(library))
+  localStorage.setItem(progressKey(KEY), JSON.stringify(library))
 }
 export function recordAttempt(id: string, ply: number, solved: boolean) {
   const library = readLibrary(),
@@ -114,7 +116,10 @@ export function recordAttempt(id: string, ply: number, solved: boolean) {
     },
   }
   if (library.active?.id === id) library.active = game
-  localStorage.setItem(KEY, JSON.stringify(library))
+  localStorage.setItem(progressKey(KEY), JSON.stringify(library))
+  rememberEarnedBadges(library.games)
+  markProgressPending(game.id)
+  notifyProgress()
 }
 export function exportPgn(game: SavedGame) {
   const chess = reconstruct(game.moves).game
@@ -129,4 +134,71 @@ export function exportPgn(game: SavedGame) {
     game.playerColor === 'black' ? 'You' : 'Opponent'
   )
   return chess.pgn()
+}
+
+export function setLibraryOwner(uid: string | null) {
+  if (progressOwner() === uid) return
+  // A guest collection is claimed once; account caches never become guest data.
+  const guest = !progressOwner() && uid ? readLibrary() : null
+  const guestBadges = !progressOwner() && uid ? localStorage.getItem('evaluchess.badges.v1') : null
+  const previousOwner = progressOwner()
+  changeProgressOwner(uid)
+  try {
+    if (guest && (guest.games.length || guestBadges)) {
+      const current = readLibrary()
+      const games = new Map(current.games.map((game) => [game.id, game]))
+      for (const game of guest.games) {
+        games.set(game.id, mergeSavedGame(games.get(game.id), game))
+        markProgressPending(game.id)
+      }
+      current.games = [...games.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 50)
+      current.active ||= guest.active
+      localStorage.setItem(progressKey(KEY), JSON.stringify(current))
+      let badges: unknown = []
+      try {
+        badges = JSON.parse(guestBadges || '[]')
+      } catch {
+        /* preserve valid games */
+      }
+      mergeAccountBadges(Array.isArray(badges) ? badges.filter((id) => typeof id === 'string') : [])
+      localStorage.removeItem(KEY)
+      localStorage.removeItem('evaluchess.badges.v1')
+      localStorage.removeItem('evaluchess.pending.v1')
+    }
+    notifyProgress()
+  } catch (error) {
+    changeProgressOwner(previousOwner)
+    throw error
+  }
+}
+
+export function mergeAccountBadges(badges: string[]) {
+  const key = progressKey('evaluchess.badges.v1')
+  let previous: unknown = []
+  try {
+    previous = JSON.parse(localStorage.getItem(key) || '[]')
+  } catch {
+    /* start clean */
+  }
+  localStorage.setItem(
+    key,
+    JSON.stringify([...new Set([...(Array.isArray(previous) ? previous : []), ...badges])])
+  )
+}
+
+export function receiveAccountProgress(incoming: unknown[], badges: string[]) {
+  const library = readLibrary()
+  const wasEmpty = !library.games.length
+  const games = new Map(library.games.map((game) => [game.id, game]))
+  for (const value of incoming) {
+    const game = normalizeSavedGame(value)
+    if (game) games.set(game.id, mergeSavedGame(games.get(game.id), game))
+  }
+  library.games = [...games.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 50)
+  if (library.active) library.active = games.get(library.active.id) || library.active
+  else if (wasEmpty) library.active = library.games[0] || null
+  localStorage.setItem(progressKey(KEY), JSON.stringify(library))
+  mergeAccountBadges(badges)
+  rememberEarnedBadges(library.games)
+  notifyProgress()
 }

@@ -1,19 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { OnlineGame } from '../lib/gameRules'
 
-export interface SpeedPairMatch {
-  playerId?: string
-  playerSecret?: string
-  gameId: string
-  myColor: 'white' | 'black'
-  opponentId: string
-  token: string
-  tc: string
-  opponentUsername?: string
-  opponentElo?: number
-  opponentUid?: string
-  opponentBot?: boolean
-}
+import type { SpeedPairMatch } from '../lib/savedGame'
+export type { SpeedPairMatch } from '../lib/savedGame'
 export interface SpeedPairIdentity {
   username?: string
   elo?: number
@@ -35,8 +24,19 @@ function playerCredentials() {
   return value
 }
 async function request(path: string, init?: RequestInit) {
-  const response = await fetch(path, { ...init, signal: AbortSignal.timeout(10000) })
-  const data = await response.json()
+  const signal = AbortSignal.timeout(10000)
+  let response: Response
+  let data
+  try {
+    response = await fetch(path, { ...init, signal })
+    data = await response.json()
+  } catch (error) {
+    const name = (error as Error).name
+    if (signal.aborted || name === 'AbortError' || name === 'TimeoutError')
+      throw new Error('The connection timed out')
+    if (error instanceof TypeError) throw new Error('Could not connect to the game server')
+    throw error
+  }
   if (!response.ok)
     throw Object.assign(new Error(data.error || 'Unable to reach the game server'), {
       status: response.status,
@@ -51,6 +51,8 @@ export function useSpeedPair() {
   const [game, setGame] = useState<ServerGame | null>(null)
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
+  const [resigning, setResigning] = useState(false)
+  const pendingResignation = useRef(false)
   const gameRef = useRef<ServerGame | null>(null)
   const pending = useRef<{ requestId: string; san: string; expectedPly: number } | null>(null)
   const generation = useRef(0)
@@ -63,6 +65,13 @@ export function useSpeedPair() {
       return
     const snapshot = { ...next, receivedAt: Date.now() }
     gameRef.current = snapshot
+    const action = pending.current
+    if (next.result || (action && next.moves[action.expectedPly] === action.san))
+      pending.current = null
+    if (next.result) {
+      pendingResignation.current = false
+      setError('')
+    }
     setGame(snapshot)
   }, [])
   const matchHeaders = useCallback(
@@ -82,6 +91,10 @@ export function useSpeedPair() {
     gameRef.current = null
     setGame(null)
     pending.current = null
+    pendingResignation.current = false
+    inFlight.current = false
+    setSending(false)
+    setResigning(false)
     setMatch(m)
     setStatus('matched')
     setError('')
@@ -102,10 +115,16 @@ export function useSpeedPair() {
         )
         if (!stopped && generation.current === run) {
           accept(data.game)
-          if (!pending.current) setError('')
+          if (!pending.current && !pendingResignation.current) setError('')
         }
       } catch (e) {
-        if (!stopped && generation.current === run) setError((e as Error).message)
+        if (
+          !stopped &&
+          generation.current === run &&
+          !gameRef.current?.result &&
+          !pendingResignation.current
+        )
+          setError((e as Error).message)
       } finally {
         polling = false
       }
@@ -160,10 +179,16 @@ export function useSpeedPair() {
           setError('')
         } catch (e) {
           const failure = e as Error & { status?: number; retryAfterMs?: number }
-          delay = Math.max(failure.status === 429 ? failure.retryAfterMs || 10000 : 0, Math.min(30000, 2000 * 2 ** Math.min(++failures, 4)))
-          if (generation.current === run) setError(failure.status === 429
-            ? 'Matchmaking is busy. Retrying automatically in a moment.'
-            : `${failure.message}. Retrying matchmaking automatically.`)
+          delay = Math.max(
+            failure.status === 429 ? failure.retryAfterMs || 10000 : 0,
+            Math.min(30000, 2000 * 2 ** Math.min(++failures, 4))
+          )
+          if (generation.current === run)
+            setError(
+              failure.status === 429
+                ? 'Matchmaking is busy. Retrying automatically in a moment.'
+                : `${failure.message}. Retrying matchmaking automatically.`
+            )
         }
         await new Promise((resolve) => setTimeout(resolve, delay))
       }
@@ -207,7 +232,15 @@ export function useSpeedPair() {
   }, [credentials, resumeMatch])
   const sendMove = useCallback(
     async (san: string) => {
-      if (!match || inFlight.current || !gameRef.current || gameRef.current.result) return
+      if (
+        !match ||
+        inFlight.current ||
+        pendingResignation.current ||
+        !gameRef.current ||
+        gameRef.current.result
+      )
+        return
+      const run = generation.current
       const action = pending.current || {
         san,
         expectedPly: gameRef.current.moves.length,
@@ -223,17 +256,21 @@ export function useSpeedPair() {
           headers: matchHeaders(match),
           body: JSON.stringify({ ...action, gameId: match.gameId, playerId: credentials.id }),
         })
+        if (run !== generation.current) return
         pending.current = null
         accept(data.game)
       } catch (e) {
+        if (run !== generation.current || !pending.current || gameRef.current?.result) return
         const status = (e as Error & { status?: number }).status
         if (status && [400, 403, 409].includes(status)) {
           pending.current = null
           setError((e as Error).message)
         } else setError(`${(e as Error).message}. Retry to confirm your move.`)
       } finally {
-        inFlight.current = false
-        setSending(false)
+        if (run === generation.current) {
+          inFlight.current = false
+          setSending(false)
+        }
       }
     },
     [match, credentials.id, accept, matchHeaders]
@@ -243,24 +280,66 @@ export function useSpeedPair() {
   }, [sendMove])
   const resignGame = useCallback(async () => {
     if (!match || inFlight.current) return false
+    if (gameRef.current?.result) return true
+    const run = generation.current
     inFlight.current = true
+    pendingResignation.current = true
+    pending.current = null
     setSending(true)
+    setResigning(true)
+    setError('')
     try {
-      const data = await request('/api/move', {
-        method: 'POST',
-        headers: matchHeaders(match),
-        body: JSON.stringify({ gameId: match.gameId, playerId: credentials.id, resign: true }),
-      })
-      pending.current = null
-      accept(data.game)
-      setError('')
-      return true
-    } catch (e) {
-      setError((e as Error).message)
+      // A lost response can still mean the server accepted the resignation.
+      // Read the result before retrying the idempotent action once.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const data = await request('/api/move', {
+            method: 'POST',
+            headers: matchHeaders(match),
+            body: JSON.stringify({ gameId: match.gameId, playerId: credentials.id, resign: true }),
+          })
+          if (run !== generation.current) return false
+          accept(data.game)
+          setError('')
+          return true
+        } catch (e) {
+          if (run !== generation.current) return false
+          if (gameRef.current?.result) {
+            setError('')
+            return true
+          }
+          const status = (e as Error & { status?: number }).status
+          if (status && [400, 403].includes(status)) {
+            pendingResignation.current = false
+            setError((e as Error).message)
+            return false
+          }
+          try {
+            const data = await request(
+              `/api/move?gameId=${encodeURIComponent(match.gameId)}&playerId=${credentials.id}`,
+              { headers: matchHeaders(match) }
+            )
+            if (run !== generation.current) return false
+            accept(data.game)
+          } catch {
+            // Keep the confirmed intent available for retry if the connection stays down.
+          }
+          if (run !== generation.current) return false
+          if (gameRef.current?.result) {
+            setError('')
+            return true
+          }
+          if (status === 429) break
+        }
+      }
+      setError('Could not confirm your resignation. Check your connection and retry.')
       return false
     } finally {
-      inFlight.current = false
-      setSending(false)
+      if (run === generation.current) {
+        inFlight.current = false
+        setSending(false)
+        setResigning(false)
+      }
     }
   }, [match, credentials.id, accept, matchHeaders])
   useEffect(
@@ -275,6 +354,8 @@ export function useSpeedPair() {
     game,
     error,
     sending,
+    resigning,
+    canRetryResignation: pendingResignation.current && !gameRef.current?.result,
     joinPool,
     leavePool,
     resumeMatch,

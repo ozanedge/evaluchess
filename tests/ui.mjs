@@ -90,7 +90,7 @@ try {
   await black.waitForFunction(
     () => JSON.parse(localStorage.getItem('evaluchess.library.v1'))?.active?.moves?.length === 1
   )
-  await white.getByRole('button', { name: 'Retry move', exact: true }).click()
+  await white.getByRole('button', { name: 'Retry move', exact: true }).waitFor({ state: 'hidden' })
   await white.waitForFunction(() => !document.body.innerText.includes('Retry to confirm your move'))
   assert.equal(
     await white.evaluate(
@@ -128,15 +128,15 @@ try {
   )
   assert.equal(await black.getByTestId('move-feedback-arrows').count(), 0)
   assert.equal(await black.getByTestId('live-move-classification').count(), 0)
-  // Each client only sees feedback for its own move, with the correct orientation.
+  // Each client only sees its own move; the shaft ends 24 units inside the arrowhead.
   assert.match(
     await white.locator('[data-kind="played"]').getAttribute('d'),
-    /^M 450 750 L 450 650$/
+    /^M 450 750 L 450 674$/
   )
   await square(black, 'e8').click()
   await square(black, 'e7').click()
   await black.locator('[data-move="e8e7"]').waitFor({ state: 'attached' })
-  assert.match(await black.locator('[data-move="e8e7"]').getAttribute('d'), /^M 350 750 L 350 650$/)
+  assert.match(await black.locator('[data-move="e8e7"]').getAttribute('d'), /^M 350 750 L 350 674$/)
   await white.waitForFunction(
     () => JSON.parse(localStorage.getItem('evaluchess.library.v1'))?.active?.moves?.length === 4
   )
@@ -176,6 +176,23 @@ try {
     'PASS: two real clients agree on moves and result; refresh resumes the online game; real Stockfish analysis completes'
   )
   await white.getByRole('link', { name: 'Evaluchess home' }).click()
+  assert.equal(
+    await white.getByRole('button', { name: 'Resume your saved online game' }).count(),
+    0
+  )
+  await white.getByRole('button', { name: 'Review your saved online game' }).click()
+  await white.getByText('Game Analysis', { exact: true }).waitFor()
+  assert.equal(await white.getByRole('button', { name: 'Resign / New Game' }).count(), 0)
+  await white.getByRole('link', { name: 'Evaluchess home' }).click()
+  await white.reload()
+  await white.getByRole('button', { name: 'Review your saved online game' }).waitFor()
+  assert.equal(
+    await white.getByRole('button', { name: 'Resume your saved online game' }).count(),
+    0
+  )
+  console.log(
+    'PASS: finished online games offer Review on home and after reload; the button opens analysis instead of resuming play'
+  )
   await white.getByRole('button', { name: 'Start Game', exact: true }).click()
   await white.getByText('Looking for an opponent…', { exact: true }).waitFor()
   assert.equal(await white.getByText('Game Analysis', { exact: true }).count(), 0)
@@ -222,7 +239,7 @@ try {
     fixture
   )
   await practicePage.reload()
-  await practicePage.getByRole('button', { name: 'Resume your saved computer game' }).click()
+  await practicePage.getByRole('button', { name: 'Review your saved computer game' }).click()
   await practicePage.getByRole('button', { name: 'Retry analysis' }).click()
   await practicePage.getByText('Game Analysis', { exact: true }).waitFor({ timeout: 30000 })
   await practicePage.getByRole('button', { name: 'Try this position again' }).waitFor()
@@ -239,9 +256,27 @@ try {
     'selecting a practice mistake hides its answer again'
   )
   await practicePage.getByRole('button', { name: 'Show answer', exact: true }).click()
+  const selectedBeforePractice = await practicePage
+    .locator('button[data-move-index][aria-pressed="true"]')
+    .getAttribute('data-move-index')
   await practicePage.getByRole('button', { name: 'Try this position again' }).click()
-  await practicePage.getByRole('dialog').waitFor()
-  await practicePage.getByRole('button', { name: 'Close practice' }).click()
+  await practicePage.getByRole('main', { name: 'Position practice' }).waitFor()
+  assert.equal(await practicePage.getByRole('dialog').count(), 0)
+  assert.equal(
+    await practicePage.locator('[data-square]').count(),
+    64,
+    'practice replaces the main board'
+  )
+  assert.equal(await practicePage.getByTestId('move-feedback-arrows').count(), 0)
+  await practicePage.getByRole('button', { name: /Back to (review|menu)/ }).click()
+  assert.equal(await practicePage.locator('[data-square]').count(), 64)
+  assert.equal(
+    await practicePage
+      .locator('button[data-move-index][aria-pressed="true"]')
+      .getAttribute('data-move-index'),
+    selectedBeforePractice,
+    'return restores the selected review position'
+  )
   await practicePage.getByText('Game Analysis', { exact: true }).waitFor()
   assert.equal(
     await practicePage.getByTestId('move-feedback-arrows').count(),
@@ -255,12 +290,12 @@ try {
   await practicePage.getByRole('button', { name: 'My games', exact: true }).click()
   await practicePage.getByRole('region', { name: 'Saved games' }).waitFor()
   await practicePage.getByRole('button', { name: /Practice 2/ }).click()
-  await practicePage.getByRole('dialog').waitFor()
+  await practicePage.getByRole('main', { name: 'Position practice' }).waitFor()
   assert.equal(await practicePage.getByText('Engine answer revealed.', { exact: false }).count(), 0)
-  await square(practicePage.getByRole('dialog'), 'd8').click()
-  await square(practicePage.getByRole('dialog'), 'h4').click()
+  await square(practicePage.getByRole('main', { name: 'Position practice' }), 'd8').click()
+  await square(practicePage.getByRole('main', { name: 'Position practice' }), 'h4').click()
   await practicePage
-    .getByText('Good move! Explore the engine continuation below.', { exact: true })
+    .getByText('Good move! Watch the continuation on the board.', { exact: true })
     .waitFor({ timeout: 30000 })
   await practicePage.waitForFunction(() => {
     const progress = document.querySelector('[aria-label="Continuation progress"]')?.textContent
@@ -268,7 +303,7 @@ try {
     const [current, total] = progress.trim().split('/')
     return Number(total) > 0 && current === total
   })
-  await practicePage.getByRole('button', { name: 'Close practice' }).click()
+  await practicePage.getByRole('button', { name: /Back to (review|menu)/ }).click()
   assert.equal(
     await practicePage.evaluate(
       () => JSON.parse(localStorage.getItem('evaluchess.library.v1')).games[0].attempts[3].solved
@@ -294,7 +329,7 @@ try {
     fixture
   )
   await recovery.reload()
-  await recovery.getByRole('button', { name: 'Resume your saved computer game' }).click()
+  await recovery.getByRole('button', { name: 'Review your saved computer game' }).click()
   await recovery.route('**/stockfish.js', (route) => route.abort())
   await recovery.getByRole('button', { name: 'Retry analysis' }).click()
   await recovery
@@ -317,7 +352,7 @@ try {
   )
   await recovery.screenshot({ path: '/tmp/evaluchess-review-mobile.png', fullPage: true })
   console.log(
-    'PASS: a lost move response retries without duplication; failed and cancelled analysis recovers; mobile layout fits'
+    'PASS: a lost move response reconciles without duplication; failed and cancelled analysis recovers; mobile layout fits'
   )
   const computer = await page()
   await computer.getByRole('button', { name: 'Computer', exact: true }).click()
@@ -568,7 +603,7 @@ try {
   const settingsPanel = settings.getByRole('region', { name: 'Player settings' })
   assert.equal(
     await settingsPanel.evaluate((el) => getComputedStyle(el).backgroundColor),
-    'rgb(23, 23, 34)'
+    'rgb(23, 34, 30)'
   )
   assert.equal(
     await settingsPanel.evaluate((el) => {
@@ -650,18 +685,15 @@ try {
   )
   failLeaderboard = false
   await account.getByRole('button', { name: 'Retry', exact: true }).click()
-  await account
-    .locator('div.grid > span')
-    .filter({ hasText: /^BrowserPlayer$/ })
-    .waitFor()
+  await account.getByRole('cell', { name: 'BrowserPlayer', exact: true }).waitFor()
   assert.equal(await account.getByRole('alert').count(), 0)
   await account.getByText('· Last 24 hours', { exact: true }).waitFor()
   await account.getByText('Elo', { exact: true }).waitFor()
   await account.getByText('Δ Elo', { exact: true }).waitFor()
-  const rankedRow = account.locator('div.grid').filter({ hasText: 'BrowserPlayer' })
-  assert.equal(await rankedRow.locator(':scope > span').nth(2).textContent(), '1')
-  assert.equal(await rankedRow.locator(':scope > span').nth(3).textContent(), '1216')
-  assert.equal(await rankedRow.locator(':scope > span').nth(4).textContent(), '+16')
+  const rankedRow = account.getByRole('row').filter({ hasText: 'BrowserPlayer' })
+  assert.equal(await rankedRow.getByRole('cell').nth(2).textContent(), '1')
+  assert.equal(await rankedRow.getByRole('cell').nth(5).textContent(), '1216')
+  assert.equal(await rankedRow.getByRole('cell').nth(6).textContent(), '+16')
   const eloHeader = await account.getByText('Elo', { exact: true }).boundingBox()
   const deltaHeader = await account.getByText('Δ Elo', { exact: true }).boundingBox()
   assert.ok(
@@ -691,12 +723,12 @@ try {
   await fallbackPage.getByRole('button', { name: 'Resign / New Game' }).waitFor({ timeout: 20000 })
   assert.ok(Date.now() - firstJoinAt >= 12000, 'browser gives humans a full 12 seconds')
   await fallbackPage.getByText('FallbackBot', { exact: true }).waitFor()
-  await fallbackPage.getByText('Bot', { exact: true }).waitFor()
+  assert.equal(await fallbackPage.getByText('Bot', { exact: true }).count(), 0)
   await fallbackPage.getByRole('button', { name: 'Resign / New Game' }).click()
   await fallbackPage.getByRole('button', { name: 'Resign game', exact: true }).click()
   await fallbackPage.close()
   console.log(
-    'PASS: browser automatically pairs with a labelled bot after 12 seconds, without another click'
+    'PASS: browser pairs with a standby opponent after 12 seconds and shows the player name without a Bot badge'
   )
   assert.deepEqual(errors, [])
 } finally {

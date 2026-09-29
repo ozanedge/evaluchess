@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
+import { setLibraryOwner } from '../lib/library'
 
 export interface AuthUser {
   uid: string
@@ -49,8 +50,11 @@ export function useAuth(): AuthApi {
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const generation = useRef(0)
+  const changing = useRef(false)
 
   const accept = useCallback((data: AccountResponse) => {
+    setLibraryOwner(data.user?.uid || null)
     setUser(data.user)
     setProfile(data.profile)
   }, [])
@@ -58,13 +62,15 @@ export function useAuth(): AuthApi {
   useEffect(() => {
     let stopped = false
     const refresh = async () => {
+      if (changing.current) return
+      const run = ++generation.current
       try {
         const data = await accountRequest()
-        if (!stopped) accept(data)
+        if (!stopped && run === generation.current) accept(data)
       } catch {
         // Keep the last known account during a temporary network failure.
       } finally {
-        if (!stopped) setLoading(false)
+        if (!stopped && run === generation.current) setLoading(false)
       }
     }
     void refresh()
@@ -80,15 +86,20 @@ export function useAuth(): AuthApi {
   const submit = useCallback(
     async (action: 'signup' | 'signin', username: string, password: string) => {
       setError(null)
+      const run = ++generation.current
+      changing.current = true
       try {
         const data = await accountRequest({
           method: 'POST',
           body: JSON.stringify({ action, username, password }),
         })
-        accept(data)
+        if (run === generation.current) accept(data)
       } catch (err) {
         setError((err as Error).message)
         throw err
+      } finally {
+        changing.current = false
+        setLoading(false)
       }
     },
     [accept]
@@ -103,8 +114,21 @@ export function useAuth(): AuthApi {
     [submit]
   )
   const signOut = useCallback(async () => {
-    const data = await accountRequest({ method: 'POST', body: JSON.stringify({ action: 'signout' }) })
-    accept(data)
+    const run = ++generation.current
+    changing.current = true
+    setError(null)
+    try {
+      const data = await accountRequest({
+        method: 'POST',
+        body: JSON.stringify({ action: 'signout' }),
+      })
+      if (run === generation.current) accept(data)
+    } catch (error) {
+      setError((error as Error).message)
+    } finally {
+      changing.current = false
+      setLoading(false)
+    }
   }, [accept])
   const clearError = useCallback(() => setError(null), [])
 

@@ -1,4 +1,4 @@
-import type { PositionEval } from '../hooks/useStockfish'
+import type { PositionEval } from '../lib/engine.js'
 
 export type MoveClassification = 'brilliant' | 'best' | 'good' | 'inaccuracy' | 'mistake' | 'blunder'
 

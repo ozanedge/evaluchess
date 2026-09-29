@@ -20,17 +20,8 @@ function formatEval(ev: LiveEval): string {
   return (ev.score >= 0 ? '+' : '-') + (absScore / 100).toFixed(1)
 }
 
-function evalColor(ev: LiveEval): string {
-  if (ev.mate !== null) return ev.mate > 0 ? 'text-white' : 'text-gray-900'
-  return ev.score >= 0 ? 'text-white' : 'text-gray-900'
-}
-
 export default function EvalBar({ ev, height }: EvalBarProps) {
-  const whitePct = ev
-    ? ev.mate !== null
-      ? ev.mate > 0 ? 95 : 5
-      : cpToWhitePct(ev.score)
-    : 50
+  const whitePct = ev ? (ev.mate !== null ? (ev.mate > 0 ? 95 : 5) : cpToWhitePct(ev.score)) : 50
 
   const blackPct = 100 - whitePct
 
@@ -66,7 +57,7 @@ export default function EvalBar({ ev, height }: EvalBarProps) {
         }}
       >
         {!labelOnBlack && ev && (
-          <span className={`text-[11px] font-bold font-mono leading-none tracking-tight ${evalColor(ev)}`}>
+          <span className="text-gray-900 text-[11px] font-bold font-mono leading-none tracking-tight">
             {label}
           </span>
         )}

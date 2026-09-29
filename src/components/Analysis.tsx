@@ -57,7 +57,7 @@ function accuracyGradient(acc: number): string {
 
 function PlayerCard({ name, stats, color }: { name: string; stats: PlayerStats; color: string }) {
   return (
-    <div className="glass rounded-2xl p-3.5 flex-1">
+    <div className="glass rounded-2xl p-5 flex-1">
       <div className="flex items-center justify-between mb-2.5">
         <div className="flex items-center gap-2">
           <div
@@ -66,12 +66,12 @@ function PlayerCard({ name, stats, color }: { name: string; stats: PlayerStats; 
           <span className="font-semibold text-xs text-gray-200 tracking-tight">{name}</span>
         </div>
         <span
-          className={`text-2xl font-bold leading-none bg-gradient-to-br ${accuracyGradient(stats.accuracy)} bg-clip-text text-transparent`}
+          className={`text-4xl font-bold leading-none bg-gradient-to-br ${accuracyGradient(stats.accuracy)} bg-clip-text text-transparent`}
         >
           {stats.accuracy}%
         </span>
       </div>
-      <div className="flex flex-col gap-y-0.5 border-t border-white/5 pt-2">
+      <div className="grid grid-cols-2 gap-x-7 gap-y-2 border-t border-white/5 pt-4 mt-4">
         {stats.brilliant > 0 && (
           <MiniStat label="Brilliant" value={stats.brilliant} color="text-cyan-300" />
         )}
@@ -106,6 +106,10 @@ function AccuracyChart({
   const areaPath = `${linePath}L${pts[n - 1][0]},${CHART_H}L${pts[0][0]},${CHART_H}Z`
 
   const labelStep = Math.max(5, Math.round(n / 12 / 2) * 2)
+  const selected = Math.max(
+    0,
+    moves.findIndex((move) => move.index === selectedMoveIndex)
+  )
 
   return (
     <div className="glass rounded-2xl p-3.5">
@@ -114,7 +118,24 @@ function AccuracyChart({
       </h3>
 
       <div
-        className="relative cursor-pointer"
+        className="relative cursor-pointer rounded-sm"
+        role="slider"
+        tabIndex={0}
+        aria-label="Move to review"
+        aria-valuemin={1}
+        aria-valuemax={n}
+        aria-valuenow={selected + 1}
+        aria-valuetext={`Move ${moves[selected].moveNumber}: ${moves[selected].move}`}
+        onKeyDown={(event) => {
+          let next = selected
+          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') next++
+          else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') next--
+          else if (event.key === 'Home') next = 0
+          else if (event.key === 'End') next = n - 1
+          else return
+          event.preventDefault()
+          onMoveClick(moves[Math.max(0, Math.min(n - 1, next))].index)
+        }}
         style={{ height: CHART_H }}
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect()
@@ -132,12 +153,12 @@ function AccuracyChart({
         >
           <defs>
             <linearGradient id="accGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#a78bfa" stopOpacity="0.55" />
-              <stop offset="100%" stopColor="#a78bfa" stopOpacity="0.02" />
+              <stop offset="0%" stopColor="#c4f078" stopOpacity="0.55" />
+              <stop offset="100%" stopColor="#c4f078" stopOpacity="0.02" />
             </linearGradient>
             <linearGradient id="accLine" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor="#818cf8" />
-              <stop offset="100%" stopColor="#e879f9" />
+              <stop offset="0%" stopColor="#c4f078" />
+              <stop offset="100%" stopColor="#54cfac" />
             </linearGradient>
           </defs>
           {[25, 50, 75].map((pct) => (
@@ -237,7 +258,7 @@ export default function Analysis({
     setPerspective(next)
     onMoveClick(index < 0 ? null : index)
   }
-  const selectedRef = useRef<HTMLDivElement | null>(null)
+  const selectedRef = useRef<HTMLButtonElement | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -295,12 +316,14 @@ export default function Analysis({
           className="thin-scroll max-h-56 overflow-y-auto space-y-1 pr-1"
         >
           {moves.map((m) => (
-            <div
+            <button
+              type="button"
+              aria-pressed={selectedMoveIndex === m.index}
               key={m.index}
               data-move-index={m.index}
               ref={selectedMoveIndex === m.index ? selectedRef : null}
               onClick={() => onMoveClick(m.index)}
-              className={`flex items-center justify-between px-3 py-1.5 rounded-lg ring-1 text-xs cursor-pointer transition-all ${
+              className={`w-full text-left flex items-center justify-between px-3 py-1.5 rounded-lg ring-1 text-xs cursor-pointer transition-all ${
                 classificationBg[m.classification]
               } ${selectedMoveIndex === m.index ? 'ring-white/40 bg-white/[0.08]' : 'hover:bg-white/[0.04]'}`}
             >
@@ -316,7 +339,7 @@ export default function Analysis({
               <span className="text-gray-500 w-12 text-right font-mono tabular-nums">
                 {m.cpLoss > 0 ? `-${m.cpLoss}cp` : ''}
               </span>
-            </div>
+            </button>
           ))}
         </div>
       </div>

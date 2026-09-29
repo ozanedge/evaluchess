@@ -38,12 +38,12 @@ export default function UserBadge({ auth, onlineCount, onOpenAuth, children }: U
   const initial = p?.username?.[0]?.toUpperCase() ?? '?'
 
   return (
-    <div className="flex items-center gap-2" ref={menuRef}>
+    <div className="relative flex items-center gap-2" ref={menuRef}>
       <div className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-gray-400 glass-subtle rounded-full px-3 py-1.5">
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
         {onlineCount} online
       </div>
-      <div className="relative">
+      <div>
         <button
           ref={triggerRef}
           type="button"
@@ -54,7 +54,7 @@ export default function UserBadge({ auth, onlineCount, onOpenAuth, children }: U
         >
           {auth.user ? (
             <>
-              <span className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-sm font-bold text-white ring-1 ring-white/15">
+              <span className="w-8 h-8 rounded-full badge-avatar flex items-center justify-center text-sm font-bold ring-1 ring-white/15">
                 {initial}
               </span>
               <span className="flex items-center gap-2">
@@ -78,12 +78,12 @@ export default function UserBadge({ auth, onlineCount, onOpenAuth, children }: U
             id={menuId}
             role="region"
             aria-label="Player settings"
-            className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto rounded-xl border border-white/15 bg-[#171722] p-4 shadow-2xl z-50"
+            className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto rounded-xl border border-white/15 bg-[#17221e] p-4 shadow-2xl z-50"
           >
             {auth.user && p && (
               <>
                 <div className="flex items-center gap-3 pb-3 border-b border-white/10">
-                  <span className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-base font-bold text-white">
+                  <span className="w-10 h-10 shrink-0 rounded-full badge-avatar flex items-center justify-center text-base font-bold">
                     {initial}
                   </span>
                   <div className="min-w-0 leading-tight">
@@ -106,6 +106,11 @@ export default function UserBadge({ auth, onlineCount, onOpenAuth, children }: U
               </h2>
               {children}
             </section>
+            {auth.error && (
+              <p role="alert" className="text-xs text-red-300">
+                {auth.error}
+              </p>
+            )}
             {auth.user && (
               <button
                 onClick={() => {

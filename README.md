@@ -6,6 +6,61 @@ A chess app built for learning. Play against the computer or find a live human o
 
 ## Features
 
+### A chess club built for progress
+
+A midnight-and-lime interface puts the board first, with a responsive play lobby,
+clear live-game states, compact leaderboard standings and a dedicated result card.
+Twelve training badges include nine activity milestones and three skill badges.
+Each badge shows its requirement and progress. Earned badges remain unlocked when
+older games leave the 50-game history. Signed-in players sync games, practice
+attempts and earned badges to their account; guests keep progress on this device.
+An unfinished practice position is one click away from the lobby.
+
+| Badge | Requirement |
+| --- | --- |
+| First finish | Complete a game |
+| Analyst | Get a game analyzed |
+| Tactician | Solve a practice position |
+| Regular | Complete 5 games |
+| Problem Solver | Solve 5 different positions |
+| Deep Thinker | Get 10 games analyzed |
+| Tactics Expert | Solve 15 different positions |
+| Veteran | Complete 25 games |
+| Practice Master | Solve 50 different positions |
+| Steady Hand | Complete an analyzed game without blunders, with 20+ of your moves |
+| Precision | Reach 90% accuracy in an analyzed game, with 20+ of your moves |
+| On the Rise | Improve average accuracy by 5 points: latest 5 vs previous 5 analyzed games, each with 20+ of your moves |
+
+The header and settings stay accessible on phones, and the layout supports 320px
+screens. Move-review rows work with the keyboard; focus the accuracy chart and use
+arrow keys, Home or End to choose a move. Decorative motion respects reduced-motion
+preferences.
+
+### Account progress and personal improvement
+
+Sign in to automatically import existing guest games and badges from this browser.
+The latest 50 saved games, their analysis and practice attempts, and all earned
+badges sync privately through the existing DynamoDB service. A fresh device
+restores them after sign-in. Account caches are separate: signing out or switching
+accounts does not transfer the previous player's collection. Player settings are
+still device-local.
+
+Local saves continue offline. The lobby shows sync status and a retry action;
+pending changes survive reloads and retry after reconnection. Concurrent saves
+merge solved attempts without replacing finished games with stale unfinished
+ones. Different move histories are never spliced together. Account records do
+not expire when an online match's live record expires. Clearing browser data
+removes unsynced changes, but synced progress restores from the account.
+
+**My progress** charts accuracy across the latest 20 analyzed games and compares
+accuracy and blunders per game for the latest 5 against the previous 5. It uses
+only the player's own moves in completed games and shows an empty state until
+analysis is available. Successful practice counts distinguish retried mistakes
+and blunders; they do not claim that a weakness has been permanently eliminated.
+Skill badges require at least 20 player moves per qualifying game. Progress and
+badges are personal, client-analyzed achievements and do not alter Elo or the
+competitive leaderboard.
+
 ### Learning-focused analysis
 
 - **Live evaluation bar** — see the engine's assessment of the position update in real time as you play
@@ -94,8 +149,11 @@ export JAVA=/absolute/path/to/bin/java  # omit if java is already on PATH
 npm run test:api
 npm run test:ui
 npm run build && node tests/premoves.mjs # production-build click/drag premoves through arrows
+node tests/mobile-play.mjs               # touch premoves, slow confirmations and resignation recovery
 node tests/review-board.mjs              # review board/arrow synchronization in both orientations
 node tests/settings.mjs                  # saved preferences, sound, premoves and resignation
+node tests/ui-redesign.mjs               # responsive layout, milestones and keyboard review
+node tests/account-progress-ui.mjs       # import, second device, offline retry and account isolation
 ```
 
 `PLAYWRIGHT_EXECUTABLE_PATH` can select an existing headless browser binary.
@@ -112,17 +170,18 @@ cancellation, and mobile overflow.
 
 ## Games, reviews, and practice
 
-- **My games** stores the latest 50 games in this browser, including incomplete
-  computer games, completed reviews and practice progress. Export PGN for a
-  portable backup. Clearing browser data removes this local history; it is not
-  account cloud sync.
+- **My games** stores the latest 50 games, including incomplete computer games,
+  completed reviews and practice progress. Signed-in players sync this collection
+  to their account; guests keep it in their browser. Export PGN for a portable copy.
 - **Resume** restores a computer game with its saved clocks. Online clocks keep
   running on the server during disconnects; resuming fetches the accepted move
   history, current clocks and final result. Online game records expire after
-  24 hours. Local saved reviews remain available afterward.
-- **Try this position again** appears on your mistakes and blunders. The practice
-  board hides the answer, checks legal moves with Stockfish, accepts the engine
-  move or a move within 20 centipawns, and lets you explore its continuation.
+  24 hours. Saved reviews remain available afterward, including synced account copies.
+- **Try this position again** appears on your mistakes and blunders. Practice
+  uses the main board, with controls beside it (below on mobile). It hides the
+  answer, checks legal moves with Stockfish, accepts the engine move or a move
+  within 20 centipawns, and plays the continuation automatically. **Try again**
+  resets the position; **Back to review** restores the selected review move.
   Revealing the answer does not mark the exercise solved. Practice progress is
   recorded separately from the original game and its analysis.
 - Analysis can be paused and retried. Worker startup, crashes and stalled searches

@@ -462,3 +462,294 @@ PASS: click and drag premoves through visible feedback arrows execute on opponen
 
 Deployment `dpl_GfY4c6Nv5eizq7MfWQkheU3QXBpE` is READY. Vercel's alias API
 confirms `evaluchess.com` points to this deployment.
+
+## Midnight-and-lime UI and training milestones
+
+Redesigned the header, lobby, game controls, leaderboard, analysis and result
+presentation with opaque surfaces, lime accents, custom SVG icons and clearer
+hierarchy. The full-width header stays before the lobby on phones; the board
+and settings fit down to 320px. Sound and other saved preferences are retained.
+
+The lobby's training track unlocks First finish, Analyst and Tactician from
+completed games, analysis and solved practice positions in the local library.
+An unsolved mistake links directly to practice. The UI labels this as progress
+from games saved in this browser. Move-review rows are keyboard-accessible
+buttons; the accuracy chart supports arrow keys and Home/End. Reduced-motion
+preferences disable decorative motion, and evaluation text now contrasts with
+the light section of the bar.
+
+Build and lint passed. The full browser suite passed during the redesign;
+production-build checks after the final polish covered responsive layouts,
+keyboard review, milestones, board synchronization, settings, audio and premoves.
+Desktop, mobile, live-game and review screenshots were visually inspected.
+
+```text
+PASS: desktop and mobile layouts fit at 320–1440px; settings remain reachable; real training milestones unlock and open practice; reduced motion is respected
+PASS: move rows and chart selections update every piece and arrow in both orientations, with exactly one board
+PASS: analysis defaults to your moves, switches stats/chart/list together, preserves original move indices, resets on reopen, and handles an opponent with no moves
+PASS: settings persist; themes and pieces render; sound defaults off and distinguishes moves/captures/check; mute takes effect immediately
+PASS: click and drag premoves through visible feedback arrows execute on opponent reply
+```
+
+Deployment `dpl_2hJ13KtnuC5SujN9UDfwQ65FLCVc` is READY. Vercel's alias API
+confirms `evaluchess.com` points to this deployment.
+
+## Separate leaderboard columns
+
+Replaced independent row grids with a shared semantic table. Rank, Player, Wins,
+Elo, Δ Elo, Losses and Draws each have their own aligned column and subtle
+vertical divider. Numeric columns have consistent widths and padding; narrow
+screens scroll the table without widening the page. Podium highlights remain.
+
+Build, lint and the production-build layout check passed; a desktop screenshot
+was inspected. The existing account browser test now uses semantic table cells.
+
+```text
+PASS: seven separate columns align across header and rows; losses/draws have separate values; mobile scroll reaches every column without page overflow
+```
+
+Deployment `dpl_8SJwuRMBdmsQpUyWGjrAZ3vJtgxz` is READY. Vercel's alias API
+confirms `evaluchess.com` points to this deployment.
+
+## Game-style move arrows
+
+Move feedback now uses glowing layered beams, dark outlines, faceted arrowheads,
+source dots and landing rings. Optimal moves have a small star badge. A brief
+draw-on reveal respects reduced-motion preferences. Move colors, knight paths,
+board orientation and the five-second live fade remain intact.
+
+Only the root fade animation can expire the overlay; decorative animation
+events cannot dismiss it early. Pointer events remain disabled so arrows do
+not block click or drag premoves.
+
+Build, lint, the full browser suite and the production-build premove check
+passed. The board screenshot was visually inspected.
+
+```text
+PASS: own arrows fade over five seconds, survive opponent replies and delayed evaluation, clear on the next own move; post-game arrows stay visible
+PASS: click and drag premoves through visible feedback arrows execute on opponent reply
+```
+
+Deployment `dpl_HbJQHMJ7YGCzY8TKmqEWcFFeGZqK` is READY. Vercel's alias API
+confirms `evaluchess.com` points to this deployment.
+
+## Practice in the main page
+
+Trying a position now replaces the main board and side panel in place. There
+is one board, no practice dialog or backdrop, and the header/settings remain
+accessible. Controls sit beside the board on desktop and below it on mobile.
+Returning restores the selected review position with its answer hidden, or the
+menu when practice was opened from saved games or training milestones.
+
+Stockfish checks, saved progress and automatic continuation are retained.
+Retry cancels pending continuation steps before resetting the position. Practice
+uses the promotion preference from the settings menu.
+
+Build, lint, production-build layout checks and the full browser suite passed.
+Desktop and mobile practice screenshots were visually inspected.
+
+```text
+PASS: practice uses one inline board, fits desktop/mobile, keeps settings accessible, and cancels continuation on retry
+PASS: practice suggestions hide arrows until explicitly revealed, including selection and return from practice
+PASS: saved reviews reopen, practice hides the answer, a correct move is evaluated, progress persists, and PGN downloads
+```
+
+Deployment `dpl_CVLuH9nVJ2MDin2TZwYAzJoXhEmD` is READY. Vercel's alias API
+confirms `evaluchess.com` points to this deployment.
+
+## Slower continuation playback
+
+Automatic continuation now advances every 1,200ms instead of 600ms, both after
+a correct practice move and when revealing the answer. Build and lint passed.
+
+Deployment `dpl_4eDjRGvKuRaibtkkaFvgrKJ1Vdmg` is READY. Vercel inspect confirms
+the `evaluchess.com` alias points to this deployment.
+
+## Quieter lobby headings and knight favicon
+
+“Your next great move.” and “Make your move up.” now use one line of smaller,
+muted text. The decorative orbit is hidden on those two views. Replaced the old
+favicon with the lime knight used in the header and versioned its URL to refresh
+browser caches. Browser theme color now matches the current background.
+
+Build and lint passed. A local production-build browser check confirmed both
+headings fit on one line at 320, 390, 768, 1024 and 1440px without page overflow.
+Desktop/mobile screenshots and the favicon at 16, 32 and 64px were inspected.
+
+```text
+PASS: both compact headings stay on one line at 320–1440px with no overflow; updated knight favicon loads and renders at 16/32/64px
+```
+
+Deployment `dpl_HwxVVhWjN1EziogQP33rcQu6DoBy` is READY. Vercel's alias API
+confirms `evaluchess.com` points to this deployment.
+
+## Wins, losses and draws first
+
+Leaderboard statistics now appear in this order after rank and player:
+Wins, Losses, Draws, Elo, Δ Elo. Column widths and browser assertions match
+the new order. Build, lint and the production-build leaderboard check passed.
+
+```text
+PASS: seven separate columns align across header and rows; losses/draws have separate values; mobile scroll reaches every column without page overflow
+```
+
+Deployment `dpl_4p9VhXw2LcBRP1w8t6oFcVRDG5zC` is READY. Vercel inspect confirms
+the `evaluchess.com` alias points to this deployment.
+
+## Mobile premoves and interrupted resignations
+
+Reproduced a touch premove failure with a three-pixel finger movement: the
+board's one-pixel drag threshold treated the tap as a drag back onto its source.
+The threshold is now eight pixels, same-square drops cannot queue a premove,
+and only the player's pieces are draggable. Tap selection and queued premoves
+are cleared consistently when reselecting a piece or resigning.
+
+Online premoves now wait for an outstanding move request to finish instead of
+being discarded when the opponent reply arrives first. Server snapshots
+reconcile accepted moves even when the original response was lost.
+
+Resignation reads the server result after a failed request and retries once
+when needed. Continued failure provides a Retry resignation action without
+claiming the game ended. Late poll failures cannot overwrite a confirmed result,
+and timeout/network failures use plain connection messages instead of raw abort
+errors. Requests from an earlier match cannot update a newer match.
+
+Build, lint and the full browser suite passed. The production-build mobile test
+uses touch-enabled Chromium at 390px, real touch events, delayed responses and
+simulated AbortErrors. This is browser emulation, not a physical-phone check.
+
+```text
+PASS: mobile tap jitter and touch dragging queue premoves; a slow move confirmation does not drop the queue
+PASS: an aborted resignation response is reconciled with the server result
+PASS: interrupted resignations retry once; continued failure shows a working Retry resignation action without claiming a result
+PASS: a lost move response reconciles without duplication; failed and cancelled analysis recovers; mobile layout fits
+```
+
+The existing production-build desktop premove check also passed:
+
+```text
+PASS: click and drag premoves through visible feedback arrows execute on opponent reply
+```
+
+Deployment `dpl_GmEbrTgYArpunsAvVgvSRuiKBT69` is READY. Vercel inspect confirms
+the `evaluchess.com` alias points to this deployment.
+
+## Right-click cancels premoves
+
+Pressing the right mouse button on any board square during live play clears
+the queued premove immediately, along with selection and square highlights.
+Build, lint and the production-build premove test passed.
+
+```text
+PASS: right-click cancels the queued premove and its highlights; cancelled moves do not execute; subsequent drag premoves still work through arrows
+```
+
+Deployment `dpl_F1v9cQWCw5gyYU2ZkPFDrkvmhPF3` is READY. Vercel inspect confirms
+the `evaluchess.com` alias points to this deployment.
+
+## Review finished games from home
+
+The saved-game button now says Review when the saved game has a result, and
+Resume only for unfinished games. Finished online and computer games open the
+existing review flow. Build, lint and the full browser suite passed, including
+home navigation, reload, finished-game review and unfinished-game resume.
+
+```text
+PASS: finished online games offer Review on home and after reload; the button opens analysis instead of resuming play
+```
+
+Deployment `dpl_8JT5sfcSwyDyDu9Knk2UFtQLj5x3` is READY. Vercel inspect confirms
+the `evaluchess.com` alias points to this deployment.
+
+## Player names without bot badges
+
+Removed the Bot badge from the opponent strip. The interface now shows the
+opponent's name and rating. No other bot wording was found in rendered UI code;
+internal identity and matchmaking behavior remain available in the source.
+Build and lint passed, along with a production-build browser check using a
+scratch standby opponent and the real matchmaking API.
+
+```text
+PASS: standby matchmaking shows the opponent name and rating without bot wording; underlying opponent identity is retained
+```
+
+Deployment `dpl_DHSQ7n49hexx65tEgoi8zsgBBxYL` is READY. Vercel inspect confirms
+the `evaluchess.com` alias points to this deployment.
+
+## Quiet in-game controls
+
+Removed the alternating motivational heading and subtitle from live play. The
+panel retains the game format, turn indicator and resign control. The turn
+indicator remains visible while the computer thinks, preventing that row from
+appearing and disappearing. Build, lint and production-build responsive UI
+checks passed; the live-game screenshot was visually inspected.
+
+Production deployment `dpl_4ZvBtdPCrsBJ9A1dX9ajwP8jA9WQ` is Ready; Vercel
+inspection confirms the `evaluchess.com` alias points to this deployment.
+
+## Arrow shaft alignment
+
+Shortened every arrow shaft layer so its rounded cap ends inside the arrowhead,
+while keeping the tip at the destination square. Knight arrows use their final
+segment for the inset. Build and lint passed. Visually checked vertical,
+horizontal, diagonal and knight arrows from both board orientations.
+
+Production deployment `dpl_DwdHEUyucBsBj7pQd9D2CcC9DBd3` is Ready; Vercel
+inspection confirms the `evaluchess.com` alias points to this deployment.
+
+## Nine training badges
+
+Added Regular (5 completed games), Problem Solver (5 solved positions), Deep
+Thinker (10 analyzed games), Tactics Expert (15 solved positions), Veteran
+(25 completed games) and Practice Master (50 solved positions). Each badge has
+its own icon, requirement and progress count; three tiers use lime, teal and gold.
+Existing saved games qualify immediately. Duplicate games and repeated attempts
+do not inflate progress, and revealing an answer does not count as solving it.
+Earned badges persist separately from the 50-game history in this browser.
+Progress toward locked badges still reflects the saved history, and clearing
+browser data removes local badges.
+
+Validation: build and lint passed, all 12 core/training tests passed, and the
+production-build UI suite passed at widths from 320 to 1440px. Visually inspected
+the expanded badge grid on desktop and mobile.
+
+Production deployment `dpl_Fx7wRkyXFPCUHWwbUUHzZkx1THKG` is Ready; Vercel
+inspection confirms the `evaluchess.com` alias points to this deployment.
+
+## Account sync and personal improvement — 2026-09-29
+
+Private account progress now uses the existing DynamoDB table via `/api/library`.
+The authenticated account owns a bounded 50-game index and separate game records,
+with badges preserved outside history retention. Five-game request/response pages
+keep payloads below function and DynamoDB limits. Conditional transactions merge
+concurrent edits, retain completed games and solved attempts, and prune older
+records. Invalid payloads, cross-account writes and divergent continuations are
+rejected. Ratings and leaderboard records are unaffected.
+
+Existing guest history and badges import once on sign-in. Local account caches
+are separate; pending saves survive reloads and retry after reconnecting. Sync
+responses are scoped to the current account; stale account refreshes cannot undo
+a sign-in or sign-out. The lobby shows save status and Retry sync on failure.
+Signing out during a game resets the view without saving the previous account's
+game into guest history. Settings remain device-local. Divergent continuations
+remain local with a visible conflict and PGN export; they are not silently merged.
+
+My progress shows own-move accuracy for the latest 20 completed analyzed games,
+latest-five versus previous-five accuracy/blunder averages, and successfully
+retried mistakes and blunders. Steady Hand, Precision and On the Rise add skill
+badges; qualifying games require at least 20 player moves. Activity milestones
+remain available, bringing the total to 12. Completion timestamps keep review
+and practice from reordering the trend.
+
+Verification: build and lint passed; 16 core/training/progress tests passed; both
+DynamoDB Local API suites passed; full gameplay UI, responsive UI and new account
+progress UI suites passed. The browser tests cover import, fresh-device restore,
+offline saves surviving reload, manual retry, resuming a synced computer game,
+signing out during play, and switching accounts. Visually inspected the progress
+view at mobile and desktop sizes. Updated legacy arrow assertions to account for
+the previously deployed 24-unit shaft inset. No new service, dependency or
+infrastructure configuration is required.
+
+Production deployment `dpl_8oFBF21QcxkVUjmPVhwCgynSGFGk` is Ready. Vercel
+inspection confirms `evaluchess.com` points to it and the new `api/library`
+function is included in region `sfo1`.

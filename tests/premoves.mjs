@@ -156,7 +156,24 @@ try {
     'click premove is highlighted while arrows remain visible'
   )
   assert.equal(await white.locator('[data-move="g1f3"]').count(), 1)
+  await square(white, 'a4').click({ button: 'right' })
+  for (const s of ['f3', 'g5'])
+    assert.doesNotMatch(
+      await square(white, s).locator(':scope > div').getAttribute('style'),
+      /100, 150, 255/,
+      'right-click anywhere on the board clears premove highlights'
+    )
   await play(black, 'b8', 'c6')
+  await moves(4)
+  await white.waitForTimeout(1000)
+  assert.equal(
+    await white.evaluate(
+      () => JSON.parse(localStorage.getItem('evaluchess.library.v1')).active.moves.length
+    ),
+    4,
+    'a cancelled premove does not execute when the opponent replies'
+  )
+  await play(white, 'f3', 'g5')
   await moves(5)
   await white.locator('[data-move="f3g5"]').waitFor({ state: 'attached' })
   const start = await square(white, 'g5').boundingBox(),
@@ -179,7 +196,7 @@ try {
     ['e4', 'e5', 'Nf3', 'Nc6', 'Ng5', 'd6', 'Nf3']
   )
   console.log(
-    'PASS: click and drag premoves through visible feedback arrows execute on opponent reply'
+    'PASS: right-click cancels the queued premove and its highlights; cancelled moves do not execute; subsequent drag premoves still work through arrows'
   )
   assert.deepEqual(errors, [])
 } catch (error) {

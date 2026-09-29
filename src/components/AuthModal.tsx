@@ -19,7 +19,9 @@ export default function AuthModal({ auth, onClose, initialMode = 'signin' }: Aut
   }, [mode, clearError])
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
@@ -47,10 +49,7 @@ export default function AuthModal({ auth, onClose, initialMode = 'signin' }: Aut
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
       onClick={onClose}
     >
-      <div
-        className="glass rounded-2xl w-full max-w-sm p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="glass rounded-2xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold gradient-text tracking-tight">
             {mode === 'signup' ? 'Create account' : 'Sign in'}
@@ -59,12 +58,16 @@ export default function AuthModal({ auth, onClose, initialMode = 'signin' }: Aut
             onClick={onClose}
             className="text-gray-400 hover:text-white text-xl leading-none"
             aria-label="Close"
-          >×</button>
+          >
+            ×
+          </button>
         </div>
 
         <form onSubmit={submit} className="flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">Username</span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">
+              Username
+            </span>
             <input
               autoFocus
               type="text"
@@ -80,7 +83,9 @@ export default function AuthModal({ auth, onClose, initialMode = 'signin' }: Aut
             />
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">Password</span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">
+              Password
+            </span>
             <input
               type="password"
               value={password}
@@ -121,10 +126,12 @@ export default function AuthModal({ auth, onClose, initialMode = 'signin' }: Aut
         </form>
 
         <p className="text-[11px] text-gray-500 leading-relaxed mt-4 text-center">
-          Signing in unlocks Elo rating and W/L tracking for Speed Pair games. Guest play still works anytime.
+          Sign in to sync games, badges and practice across devices, and track your Speed Pair
+          rating. Existing progress on this device is added to your account.
         </p>
         <p className="text-[11px] text-amber-300/80 leading-relaxed mt-2 text-center">
-          Accounts moved to Evaluchess storage. If you used the old sign-in, create your username again once.
+          Accounts moved to Evaluchess storage. If you used the old sign-in, create your username
+          again once.
         </p>
       </div>
     </div>

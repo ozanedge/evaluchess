@@ -8,9 +8,9 @@
     "build": "tsc -b && tsc -p tsconfig.api.json && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node tests/build.mjs && node --test tests/core.test.mjs",
+    "test": "node tests/build.mjs && node --test --test-concurrency=1 tests/core.test.mjs tests/training.test.mjs tests/progress.test.mjs",
     "check:api": "tsc -p tsconfig.api.json",
-    "test:api": "node tests/build.mjs && node --test tests/api.test.mjs",
+    "test:api": "node tests/build.mjs && node --test --test-concurrency=1 tests/api.test.mjs tests/library-api.test.mjs",
     "test:ui": "node tests/ui.mjs"
   },
   "dependencies": {

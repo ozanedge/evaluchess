@@ -1,4 +1,5 @@
 import { readLibrary, exportPgn } from '../lib/library'
+import { progressOwner } from '../lib/progressScope'
 import type { SavedGame } from '../lib/library'
 export default function GameLibrary({
   onOpen,
@@ -12,7 +13,10 @@ export default function GameLibrary({
     <section className="glass rounded-2xl p-4 space-y-4" aria-label="Saved games">
       <h2 className="font-semibold text-white">Your games & practice</h2>
       <p className="text-sm text-gray-400">
-        The latest 50 games stay in this browser. Download PGN to keep a copy.
+        {progressOwner()
+          ? 'Your latest 50 games sync to your account.'
+          : 'The latest 50 games stay in this browser. Sign in to sync across devices.'}{' '}
+        Download PGN to keep a copy.
       </p>
       {!library.games.length && (
         <p className="text-gray-300">Play a game to start your learning collection.</p>

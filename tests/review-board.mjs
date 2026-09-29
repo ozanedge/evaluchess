@@ -120,12 +120,12 @@ try {
       },
       { ...fixture, playerColor: color }
     )
-    await p.getByRole('button', { name: 'Resume your saved computer game' }).click()
+    await p.getByRole('button', { name: 'Review your saved computer game' }).click()
     await p.getByText('Game Analysis', { exact: true }).waitFor()
     const rows = p
       .getByText('Move Review', { exact: true })
       .locator('..')
-      .locator(':scope > div > div')
+      .locator(':scope > div > button')
     const chart = p
       .getByText('Accuracy by Move', { exact: true })
       .locator('..')
@@ -231,7 +231,7 @@ try {
     }
     await p.getByRole('button', { name: 'Opponent moves', exact: true }).click()
     await p.getByRole('link', { name: 'Evaluchess home' }).click()
-    await p.getByRole('button', { name: 'Resume your saved computer game' }).click()
+    await p.getByRole('button', { name: 'Review your saved computer game' }).click()
     await expectPerspective('Your moves')
     await p.close()
   }
@@ -253,7 +253,7 @@ try {
       ),
     shortFixture
   )
-  await shortPage.getByRole('button', { name: 'Resume your saved computer game' }).click()
+  await shortPage.getByRole('button', { name: 'Review your saved computer game' }).click()
   await shortPage.getByRole('button', { name: 'Opponent moves', exact: true }).click()
   await shortPage.getByText('No moves to analyze yet.', { exact: true }).waitFor()
   assert.equal(await shortPage.getByText('Accuracy by Move', { exact: true }).count(), 0)

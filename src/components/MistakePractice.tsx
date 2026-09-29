@@ -7,17 +7,22 @@ import { reconstruct, recordAttempt } from '../lib/library'
 import { useStockfish } from '../hooks/useStockfish'
 import { boardAppearance } from './boardAppearance'
 import type { PlayerSettings } from '../lib/settings'
+import Icon from './Icon'
 
 export default function MistakePractice({
   game,
   ply,
   onClose,
   settings,
+  boardSize,
+  returnLabel,
 }: {
   game: SavedGame
   ply: number
   onClose: () => void
   settings: PlayerSettings
+  boardSize: number
+  returnLabel: string
 }) {
   const initial = reconstruct(game.moves.slice(0, ply)).game.fen()
   const move = game.analysis!.moves[ply]
@@ -27,18 +32,15 @@ export default function MistakePractice({
   const [revealed, setRevealed] = useState(false)
   const [line, setLine] = useState<string[]>([])
   const [step, setStep] = useState(0)
-  const [promotion, setPromotion] = useState<string>(settings.promotion)
   const [selected, setSelected] = useState<string | null>(null)
   const { evaluatePosition, destroy } = useStockfish()
   const generation = useRef(0)
-  const dialog = useRef<HTMLDivElement>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
   useEffect(() => {
     const tracker = generation
-    const previous = document.activeElement as HTMLElement | null
-    dialog.current?.focus()
+    heading.current?.focus()
     return () => {
       tracker.current++
-      previous?.focus()
     }
   }, [])
   function save(solved: boolean) {
@@ -50,7 +52,7 @@ export default function MistakePractice({
   }
   async function playContinuation(moves: string[], start: number, run: number) {
     for (let next = start + 1; next <= moves.length; next++) {
-      await new Promise((resolve) => window.setTimeout(resolve, 600))
+      await new Promise((resolve) => window.setTimeout(resolve, 1200))
       if (run !== generation.current) return
       showStep(next, moves)
     }
@@ -60,7 +62,7 @@ export default function MistakePractice({
     const chess = new Chess(initial)
     let played
     try {
-      played = chess.move({ from, to, promotion })
+      played = chess.move({ from, to, promotion: settings.promotion })
     } catch {
       setMessage('That move is not legal. Try another square.')
       return false
@@ -83,7 +85,7 @@ export default function MistakePractice({
       if (correct) {
         const continuation = [uci, ...(after.pv || []).slice(0, 5)]
         setRevealed(true)
-        setMessage('Good move! Explore the engine continuation below.')
+        setMessage('Good move! Watch the continuation on the board.')
         setLine(continuation)
         setStep(1)
         await playContinuation(continuation, 1, run)
@@ -140,134 +142,124 @@ export default function MistakePractice({
     setFen(chess.fen())
     setStep(next)
   }
+  function reset() {
+    generation.current++
+    destroy()
+    setBusy(false)
+    setRevealed(false)
+    setFen(initial)
+    setLine([])
+    setStep(0)
+    setSelected(null)
+    setMessage('Find the strongest move. The engine answer is hidden.')
+  }
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/80 overflow-y-auto p-4"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          destroy()
-          onClose()
-        }
-        if (e.key === 'Tab') {
-          const items = dialog.current?.querySelectorAll<HTMLElement>(
-            'button:not(:disabled), select'
-          )
-          if (!items?.length) return
-          const first = items[0],
-            last = items[items.length - 1]
-          if (
-            e.shiftKey &&
-            (document.activeElement === first || document.activeElement === dialog.current)
-          ) {
-            e.preventDefault()
-            last.focus()
-          } else if (!e.shiftKey && document.activeElement === last) {
-            e.preventDefault()
-            first.focus()
-          }
-        }
-      }}
-    >
-      <div
-        ref={dialog}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="practice-title"
-        className="mx-auto max-w-xl bg-gray-950 rounded-2xl p-4 space-y-3"
-      >
-        <div className="flex justify-between">
-          <h2 id="practice-title" className="font-bold">
-            Practice move {move.moveNumber} · {move.player} to move
-          </h2>
-          <button
-            aria-label="Close practice"
-            onClick={() => {
-              destroy()
-              onClose()
-            }}
-          >
-            Close ×
-          </button>
+    <>
+      <div className="board-column" style={{ width: boardSize <= 500 ? '100%' : boardSize + 40 }}>
+        <div className="player-strip glass flex items-center gap-3 px-4 py-3">
+          <span className="accent-text">
+            <Icon name="spark" size={24} />
+          </span>
+          <div>
+            <span className="eyebrow accent-text">YOUR SECOND CHANCE</span>
+            <h2 ref={heading} tabIndex={-1} className="font-semibold text-white outline-none">
+              Practice move {move.moveNumber} · {move.player} to move
+            </h2>
+          </div>
         </div>
-        <p role="status" className="text-sm text-gray-300">
-          {message}
-        </p>
-        <Chessboard
-          options={{
-            position: fen,
-            ...boardAppearance(settings),
-            boardOrientation: game.playerColor,
-            allowDragging: !busy && !revealed,
-            onPieceDrop: ({ sourceSquare, targetSquare }) => {
-              if (targetSquare) void attempt(sourceSquare, targetSquare)
-              return false
-            },
-            onSquareClick: ({ square }) => {
-              if (busy || revealed) return
-              if (selected) {
-                void attempt(selected, square)
-                setSelected(null)
-              } else if (
-                new Chess(initial).get(square as Square)?.color === new Chess(initial).turn()
-              )
-                setSelected(square)
-            },
-            squareStyles: selected ? { [selected]: { backgroundColor: '#fbbf2470' } } : {},
-            showAnimations: false,
-          }}
-        />
-        {!revealed && (
-          <label className="text-sm">
-            Promote to{' '}
-            <select
-              aria-label="Practice promotion"
-              value={promotion}
-              onChange={(e) => setPromotion(e.target.value)}
-              className="bg-gray-800 p-2 rounded"
-            >
-              <option value="q">Queen</option>
-              <option value="r">Rook</option>
-              <option value="b">Bishop</option>
-              <option value="n">Knight</option>
-            </select>
-          </label>
-        )}
-        <div className="flex gap-2 flex-wrap">
+        <div
+          className="board-frame overflow-hidden ml-9"
+          style={{ width: boardSize, height: boardSize }}
+        >
+          <Chessboard
+            options={{
+              position: fen,
+              ...boardAppearance(settings),
+              boardOrientation: game.playerColor,
+              allowDragging: !busy && !revealed,
+              onPieceDrop: ({ sourceSquare, targetSquare }) => {
+                if (targetSquare) void attempt(sourceSquare, targetSquare)
+                return false
+              },
+              onSquareClick: ({ square }) => {
+                if (busy || revealed) return
+                if (selected) {
+                  void attempt(selected, square)
+                  setSelected(null)
+                } else if (
+                  new Chess(initial).get(square as Square)?.color === new Chess(initial).turn()
+                )
+                  setSelected(square)
+              },
+              squareStyles: selected ? { [selected]: { backgroundColor: '#fbbf2470' } } : {},
+              showAnimations: false,
+            }}
+          />
+        </div>
+        <p className="text-sm text-gray-400 text-center">No clock. Take your time.</p>
+      </div>
+      <div className="side-panel w-full lg:flex-1 lg:min-w-64 flex flex-col gap-4">
+        <section className="glass rounded-2xl p-5 space-y-4" aria-label="Practice controls">
+          <span className="eyebrow accent-text">
+            {revealed ? 'EXPLORE THE LINE' : 'FIND A BETTER MOVE'}
+          </span>
+          <h3 className="text-xl font-bold text-white">
+            {revealed ? 'See what happens next.' : 'Turn this moment around.'}
+          </h3>
+          <p role="status" className="text-sm text-gray-300 leading-relaxed">
+            {message}
+          </p>
           {!revealed && (
             <button
               disabled={busy}
-              className="btn-primary rounded-lg px-3 py-2"
+              className="btn-primary rounded-xl w-full px-3 py-3"
               onClick={() => void reveal()}
             >
-              Reveal answer
+              {busy ? 'Checking your move…' : 'Reveal answer'}
             </button>
           )}
           {revealed && (
             <>
-              <button disabled={step === 0} onClick={() => showStep(step - 1)}>
-                ← Previous
-              </button>
-              <span aria-label="Continuation progress" aria-live="polite">
-                {step}/{line.length}
-              </span>
-              <button disabled={step === line.length} onClick={() => showStep(step + 1)}>
-                Next →
-              </button>
-              <button
-                onClick={() => {
-                  setRevealed(false)
-                  setFen(initial)
-                  setStep(0)
-                  setMessage('Find the strongest move.')
-                }}
-              >
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  className="rounded-lg bg-white/5 px-3 py-2 text-sm"
+                  disabled={busy || step === 0}
+                  onClick={() => showStep(step - 1)}
+                >
+                  ← Previous
+                </button>
+                <span
+                  className="text-sm font-mono text-gray-300"
+                  aria-label="Continuation progress"
+                  aria-live="polite"
+                >
+                  {step}/{line.length}
+                </span>
+                <button
+                  className="rounded-lg bg-white/5 px-3 py-2 text-sm"
+                  disabled={busy || step === line.length}
+                  onClick={() => showStep(step + 1)}
+                >
+                  Next →
+                </button>
+              </div>
+              <button className="btn-primary rounded-xl w-full px-3 py-3" onClick={reset}>
                 Try again
               </button>
             </>
           )}
-        </div>
+        </section>
+        <button
+          className="glass-subtle rounded-xl px-4 py-3 text-sm font-semibold"
+          onClick={() => {
+            generation.current++
+            destroy()
+            onClose()
+          }}
+        >
+          ← {returnLabel}
+        </button>
       </div>
-    </div>
+    </>
   )
 }
