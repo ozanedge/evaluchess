@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="384" viewBox="0 0 1280 384" role="img" aria-labelledby="title description">
+  <title id="title">Evaluchess: play, review, improve</title>
+  <desc id="description">A midnight green banner with the lime knight emblem, the Evaluchess name, and a chessboard illustration.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#14251b"/><stop offset="1" stop-color="#0b1210"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#c4f078"/><stop offset="1" stop-color="#56bfa5"/></linearGradient>
+  </defs>
+  <rect width="1280" height="384" rx="24" fill="url(#background)"/>
+  <rect x="1" y="1" width="1278" height="382" rx="23" fill="none" stroke="#2d4233"/>
+  <path d="M800 0L1056 384M936 0L1192 384M664 0L920 384" stroke="#c4f078" stroke-opacity=".045" stroke-width="72"/>
+  <g transform="translate(52 48)">
+    <rect width="44" height="44" rx="12" fill="#c4f078"/>
+    <path d="M7 21h13l-1-4c3-8-1-13-8-13l-2-2-1 5-5 6 2 3 5-2-3 7m4-13h.01" transform="translate(6 5) scale(1.35)" fill="none" stroke="#17220d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="60" y="29" fill="#c4f078" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" letter-spacing="2">PLAY · REVIEW · PRACTICE</text>
+  </g>
+  <text x="52" y="182" fill="#eff4ee" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="700" letter-spacing="-3">Evaluchess</text>
+  <text x="56" y="236" fill="#c4f078" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="600">Make your next move a better one.</text>
+  <text x="56" y="275" fill="#a6b4ae" font-family="Arial, Helvetica, sans-serif" font-size="19">Turn your games into lessons, one position at a time.</text>
+  <rect x="56" y="313" width="160" height="30" rx="15" fill="#243825"/>
+  <text x="136" y="334" text-anchor="middle" fill="#c4f078" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="600">evaluchess.com</text>
+  <path d="M240 328H684" stroke="#334936" stroke-width="1"/>
+  <g transform="translate(894 62)">
+    <rect x="-14" y="-14" width="284" height="284" rx="12" fill="#131d1b" stroke="#3d5841"/>
+    <rect x="0" y="0" width="32" height="32" fill="#637b65"/>
+<rect x="32" y="0" width="32" height="32" fill="#273d35"/>
+<rect x="64" y="0" width="32" height="32" fill="#637b65"/>
+<rect x="96" y="0" width="32" height="32" fill="#273d35"/>
+<rect x="128" y="0" width="32" height="32" fill="#637b65"/>
+<rect x="160" y="0" width="32" height="32" fill="#273d35"/>
+<rect x="192" y="0" width="32" height="32" fill="#637b65"/>
+<rect x="224" y="0" width="32" height="32" fill="#273d35"/>
+<rect x="0" y="32" width="32" height="32" fill="#273d35"/>
+<rect x="32" y="32" width="32" height="32" fill="#637b65"/>
+<rect x="64" y="32" width="32" height="32" fill="#273d35"/>
+<rect x="96" y="32" width="32" height="32" fill="#637b65"/>
+<rect x="128" y="32" width="32" height="32" fill="#273d35"/>
+<rect x="160" y="32" width="32" height="32" fill="#637b65"/>
+<rect x="192" y="32" width="32" height="32" fill="#273d35"/>
+<rect x="224" y="32" width="32" height="32" fill="#637b65"/>
+<rect x="0" y="64" width="32" height="32" fill="#637b65"/>
+<rect x="32" y="64" width="32" height="32" fill="#273d35"/>
+<rect x="64" y="64" width="32" height="32" fill="#637b65"/>
+<rect x="96" y="64" width="32" height="32" fill="#273d35"/>
+<rect x="128" y="64" width="32" height="32" fill="#637b65"/>
+<rect x="160" y="64" width="32" height="32" fill="#273d35"/>
+<rect x="192" y="64" width="32" height="32" fill="#637b65"/>
+<rect x="224" y="64" width="32" height="32" fill="#273d35"/>
+<rect x="0" y="96" width="32" height="32" fill="#273d35"/>
+<rect x="32" y="96" width="32" height="32" fill="#637b65"/>
+<rect x="64" y="96" width="32" height="32" fill="#273d35"/>
+<rect x="96" y="96" width="32" height="32" fill="#637b65"/>
+<rect x="128" y="96" width="32" height="32" fill="#273d35"/>
+<rect x="160" y="96" width="32" height="32" fill="#637b65"/>
+<rect x="192" y="96" width="32" height="32" fill="#273d35"/>
+<rect x="224" y="96" width="32" height="32" fill="#637b65"/>
+<rect x="0" y="128" width="32" height="32" fill="#637b65"/>
+<rect x="32" y="128" width="32" height="32" fill="#273d35"/>
+<rect x="64" y="128" width="32" height="32" fill="#637b65"/>
+<rect x="96" y="128" width="32" height="32" fill="#273d35"/>
+<rect x="128" y="128" width="32" height="32" fill="#637b65"/>
+<rect x="160" y="128" width="32" height="32" fill="#273d35"/>
+<rect x="192" y="128" width="32" height="32" fill="#637b65"/>
+<rect x="224" y="128" width="32" height="32" fill="#273d35"/>
+<rect x="0" y="160" width="32" height="32" fill="#273d35"/>
+<rect x="32" y="160" width="32" height="32" fill="#637b65"/>
+<rect x="64" y="160" width="32" height="32" fill="#273d35"/>
+<rect x="96" y="160" width="32" height="32" fill="#637b65"/>
+<rect x="128" y="160" width="32" height="32" fill="#273d35"/>
+<rect x="160" y="160" width="32" height="32" fill="#637b65"/>
+<rect x="192" y="160" width="32" height="32" fill="#273d35"/>
+<rect x="224" y="160" width="32" height="32" fill="#637b65"/>
+<rect x="0" y="192" width="32" height="32" fill="#637b65"/>
+<rect x="32" y="192" width="32" height="32" fill="#273d35"/>
+<rect x="64" y="192" width="32" height="32" fill="#637b65"/>
+<rect x="96" y="192" width="32" height="32" fill="#273d35"/>
+<rect x="128" y="192" width="32" height="32" fill="#637b65"/>
+<rect x="160" y="192" width="32" height="32" fill="#273d35"/>
+<rect x="192" y="192" width="32" height="32" fill="#637b65"/>
+<rect x="224" y="192" width="32" height="32" fill="#273d35"/>
+<rect x="0" y="224" width="32" height="32" fill="#273d35"/>
+<rect x="32" y="224" width="32" height="32" fill="#637b65"/>
+<rect x="64" y="224" width="32" height="32" fill="#273d35"/>
+<rect x="96" y="224" width="32" height="32" fill="#637b65"/>
+<rect x="128" y="224" width="32" height="32" fill="#273d35"/>
+<rect x="160" y="224" width="32" height="32" fill="#637b65"/>
+<rect x="192" y="224" width="32" height="32" fill="#273d35"/>
+<rect x="224" y="224" width="32" height="32" fill="#637b65"/>
+
+    <rect x="128" y="128" width="32" height="32" fill="#c4f078" fill-opacity=".3"/>
+    <rect x="160" y="64" width="32" height="32" fill="#c4f078" fill-opacity=".42"/>
+    <path d="M144 144V80H176" fill="none" stroke="#101c12" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M144 144V80H176" fill="none" stroke="url(#accent)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M169 72L180 80L169 88Z" fill="#c4f078"/>
+    <g transform="translate(128 128)"><path d="M7 21h13l-1-4c3-8-1-13-8-13l-2-2-1 5-5 6 2 3 5-2-3 7m4-13h.01" transform="translate(4 4)" fill="#eff4ee" stroke="#0b1210" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <text x="128" y="303" text-anchor="middle" fill="#91a49a" font-family="Arial, Helvetica, sans-serif" font-size="13" letter-spacing="2">SEE THE MOVE. LEARN THE POSITION.</text>
+  </g>
+</svg>

@@ -41,5 +41,6 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^6.4.1"
-  }
+  },
+  "description": "A chess playground for getting better: play five-minute games, review every move with Stockfish, and practice your mistakes."
 }

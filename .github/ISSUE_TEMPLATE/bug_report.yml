@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a problem with playing, reviewing or practicing.
+title: "[Bug] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the game mode and the steps needed to see the issue.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and device
+      placeholder: Safari on iPhone, Chrome on macOS, or your setup
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or game details
+      description: Add a screenshot, board position or exported game that helps reproduce it.

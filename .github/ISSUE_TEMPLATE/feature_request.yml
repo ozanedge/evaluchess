@@ -1,0 +1,18 @@
+name: Feature request
+description: Suggest an improvement to playing, reviewing or practicing.
+title: "[Feature] "
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe the player or contributor goal and the current obstacle.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Explain how the change would help. Include examples if useful.
+    validations:
+      required: true
